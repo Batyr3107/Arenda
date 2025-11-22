@@ -1,9 +1,26 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.api.v1.api import api_router
+from app.core.scheduler import start_scheduler, shutdown_scheduler
 import os
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle application startup and shutdown events"""
+    # Startup
+    logger.info("🚀 Starting application...")
+    start_scheduler()
+    yield
+    # Shutdown
+    logger.info("⏹️  Shutting down application...")
+    shutdown_scheduler()
 
 # Create FastAPI app
 app = FastAPI(
@@ -12,7 +29,8 @@ app = FastAPI(
     description="API для системы управления арендой коммерческой недвижимости",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json"
+    openapi_url="/api/openapi.json",
+    lifespan=lifespan
 )
 
 # CORS middleware

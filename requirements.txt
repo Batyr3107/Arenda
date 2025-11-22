@@ -42,3 +42,9 @@ fastapi-cors==0.0.6
 # Utilities
 python-slugify==8.0.1
 pytz==2023.3
+
+# Background tasks
+APScheduler==3.10.4
+
+# Data export
+openpyxl==3.1.2

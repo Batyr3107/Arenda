@@ -8,7 +8,7 @@ from datetime import date
 from app.db.session import get_db
 from app.models.contract import Contract, PaymentSchedule, ContractStatus
 from app.models.tenant import Tenant
-from app.models.premise import Premise
+from app.models.property import Premise
 from app.models.user import User
 from app.schemas.contract import (
     ContractCreate, ContractUpdate, ContractResponse, ContractDetailResponse,

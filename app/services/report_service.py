@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
 from datetime import date, timedelta
 from typing import List, Dict
-from app.models.property import Property, Premise, PremiseStatus
+from app.models.property import Property, Building, Premise, PremiseStatus
 from app.models.contract import Contract, ContractStatus
 from app.models.payment import Payment, PaymentStatus
 from app.models.tenant import Tenant

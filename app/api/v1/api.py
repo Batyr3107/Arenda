@@ -1,13 +1,15 @@
 from fastapi import APIRouter
 from app.api.v1.endpoints import (
-    auth, properties, premises, tenants, contracts, payments,
-    leads, catalog, files, reports, notifications
+    auth, companies, users, properties, premises, tenants, contracts, payments,
+    leads, catalog, files, reports, notifications, search, bulk
 )
 
 api_router = APIRouter()
 
 # Include all endpoint routers
 api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+api_router.include_router(companies.router, prefix="/companies", tags=["Companies"])
+api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(properties.router, prefix="/properties", tags=["Properties"])
 api_router.include_router(premises.router, prefix="/premises", tags=["Premises"])
 api_router.include_router(tenants.router, prefix="/tenants", tags=["Tenants"])
@@ -18,3 +20,5 @@ api_router.include_router(catalog.router, prefix="/catalog", tags=["Public Catal
 api_router.include_router(files.router, prefix="/files", tags=["File Management"])
 api_router.include_router(reports.router, prefix="/reports", tags=["Reports & Analytics"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
+api_router.include_router(search.router, prefix="/search", tags=["Search"])
+api_router.include_router(bulk.router, prefix="/bulk", tags=["Bulk Operations"])
