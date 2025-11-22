@@ -18,17 +18,16 @@ def export_to_csv(data: List[Dict[str, Any]], columns: List[str]) -> BytesIO:
     Returns:
         BytesIO buffer containing CSV data
     """
-    output = BytesIO()
+    from io import StringIO
 
-    # Write BOM for Excel to recognize UTF-8
-    output.write('\ufeff'.encode('utf-8'))
+    # Use StringIO for CSV writing
+    string_buffer = StringIO()
 
     # Create CSV writer
     csv_writer = csv.DictWriter(
-        output,
+        string_buffer,
         fieldnames=columns,
-        extrasaction='ignore',
-        encoding='utf-8'
+        extrasaction='ignore'
     )
 
     # Write header
@@ -47,7 +46,12 @@ def export_to_csv(data: List[Dict[str, Any]], columns: List[str]) -> BytesIO:
                 formatted_row[key] = str(value)
         csv_writer.writerow(formatted_row)
 
+    # Convert to BytesIO with UTF-8 BOM
+    output = BytesIO()
+    output.write('\ufeff'.encode('utf-8'))  # BOM for Excel
+    output.write(string_buffer.getvalue().encode('utf-8'))
     output.seek(0)
+
     return output
 
 
