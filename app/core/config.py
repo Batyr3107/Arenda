@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # Redis (optional)
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # Telegram Bot (optional)
+    TELEGRAM_BOT_TOKEN: str = None
+
     class Config:
         env_file = ".env"
         case_sensitive = True

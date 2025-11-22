@@ -1,7 +1,8 @@
 from fastapi import APIRouter
 from app.api.v1.endpoints import (
     auth, companies, users, properties, premises, tenants, contracts, payments,
-    leads, catalog, files, reports, notifications, search, bulk, audit, analytics, webhooks, settings
+    leads, catalog, files, reports, notifications, search, bulk, audit, analytics,
+    webhooks, settings, telegram, scheduled_reports
 )
 
 api_router = APIRouter()
@@ -26,3 +27,5 @@ api_router.include_router(audit.router, prefix="/audit", tags=["Audit Log"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
 api_router.include_router(settings.router, prefix="/settings", tags=["Settings"])
+api_router.include_router(telegram.router, prefix="/telegram", tags=["Telegram Bot"])
+api_router.include_router(scheduled_reports.router, prefix="/scheduled-reports", tags=["Scheduled Reports"])
