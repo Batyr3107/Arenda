@@ -43,10 +43,20 @@ class Payment(Base):
     # Additional info
     description = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
+    currency = Column(String, default="KZT")  # Валюта
+
+    # Partial payments support
+    allow_partial_payments = Column(Boolean, default=True)
+    amount_paid = Column(Float, default=0.0)  # Сумма оплаченная (частично или полностью)
+    amount_remaining = Column(Float, nullable=True)  # Остаток к оплате
 
     # Late fees
     late_fee = Column(Float, default=0.0)  # Пеня
     days_overdue = Column(Integer, default=0)
+
+    # Payment gateway
+    payment_intent_id = Column(String, nullable=True)  # ID платежа в платежном шлюзе
+    payment_provider = Column(String, nullable=True)  # stripe, kaspi, etc
 
     # Approval workflow
     uploaded_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
@@ -63,6 +73,7 @@ class Payment(Base):
     # Relationships
     contract = relationship("Contract", back_populates="payments")
     documents = relationship("PaymentDocument", back_populates="payment", cascade="all, delete-orphan")
+    partial_payments = relationship("PartialPayment", back_populates="payment", cascade="all, delete-orphan")
     uploaded_by = relationship("User", foreign_keys=[uploaded_by_id])
     first_approved_by = relationship("User", foreign_keys=[first_approved_by_id])
     second_approved_by = relationship("User", foreign_keys=[second_approved_by_id])

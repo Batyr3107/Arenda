@@ -33,6 +33,20 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Add security and utility middleware
+from app.core.middleware import (
+    RateLimitMiddleware,
+    RequestLoggingMiddleware,
+    SecurityHeadersMiddleware,
+    ErrorLoggingMiddleware
+)
+
+# Add middleware (order matters - last added is executed first)
+app.add_middleware(ErrorLoggingMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(RateLimitMiddleware)
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,

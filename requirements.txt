@@ -52,3 +52,10 @@ pandas==2.1.4
 
 # HTTP client for webhooks
 httpx==0.25.2
+
+# 2FA and security
+pyotp==2.9.0
+qrcode==7.4.2
+
+# Payment gateways (optional)
+stripe==7.9.0

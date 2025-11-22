@@ -204,6 +204,9 @@ async def download_contract_pdf(
 ):
     """Generate and download contract PDF"""
     # Get contract with related data
+    from app.models.settings import SystemSettings
+    from app.models.property import Building, Property
+
     result = await db.execute(
         select(Contract)
         .options(selectinload(Contract.tenant), selectinload(Contract.premise))
@@ -217,17 +220,42 @@ async def download_contract_pdf(
             detail="Contract not found"
         )
 
+    # Get system settings for company info
+    settings_result = await db.execute(select(SystemSettings).limit(1))
+    system_settings = settings_result.scalar_one_or_none()
+    company_name = system_settings.company_name if system_settings else "Property Management Company"
+
+    # Get full premise address
+    building = None
+    property_obj = None
+    if contract.premise.building_id:
+        building_result = await db.execute(select(Building).where(Building.id == contract.premise.building_id))
+        building = building_result.scalar_one_or_none()
+
+    if contract.premise.property_id:
+        property_result = await db.execute(select(Property).where(Property.id == contract.premise.property_id))
+        property_obj = property_result.scalar_one_or_none()
+
+    # Build full address
+    address_parts = []
+    if property_obj:
+        address_parts.append(property_obj.address)
+    if building:
+        address_parts.append(f"Building {building.name}")
+    address_parts.append(f"Premise {contract.premise.number}")
+    premise_address = ", ".join(address_parts)
+
     # Generate PDF
     pdf_buffer = create_contract_pdf(
         contract_number=contract.contract_number,
         contract_date=contract.signed_date or date.today(),
-        company_name="Your Company",  # TODO: Get from settings
-        company_director="Director Name",
-        tenant_name=contract.tenant.name,
-        tenant_director="Tenant Director",
+        company_name=company_name,
+        company_director="Director",
+        tenant_name=contract.tenant.full_name,
+        tenant_director=contract.tenant.full_name,
         premise_number=contract.premise.number,
         premise_area=contract.premise.area,
-        premise_address="Address",  # TODO: Get from premise
+        premise_address=premise_address,
         start_date=contract.start_date,
         end_date=contract.end_date,
         monthly_rent=contract.monthly_rent,

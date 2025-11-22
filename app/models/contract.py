@@ -39,9 +39,15 @@ class Contract(Base):
     # Financial
     monthly_rent = Column(Float, nullable=False)  # Ежемесячная арендная плата
     deposit_amount = Column(Float, nullable=True)  # Залог
+    deposit_paid = Column(Boolean, default=False)  # Залог оплачен
+    deposit_paid_date = Column(Date, nullable=True)  # Дата оплаты залога
+    deposit_refunded = Column(Boolean, default=False)  # Залог возвращен
+    deposit_refund_amount = Column(Float, nullable=True)  # Сумма возврата залога
+    deposit_refund_date = Column(Date, nullable=True)  # Дата возврата залога
     payment_frequency = Column(SQLEnum(PaymentFrequency), default=PaymentFrequency.MONTHLY)
     payment_day = Column(Integer, default=1)  # День месяца для оплаты
     late_fee_percentage = Column(Float, default=0.1)  # Процент пени за день просрочки
+    currency = Column(String, default="KZT")  # Валюта
 
     # Additional terms
     utilities_included = Column(Boolean, default=False)  # Коммунальные услуги включены
@@ -49,8 +55,17 @@ class Contract(Base):
     terms_and_conditions = Column(Text, nullable=True)
     special_conditions = Column(Text, nullable=True)
 
+    # Renewal
+    auto_renew = Column(Boolean, default=False)  # Автопродление
+    renewal_notice_days = Column(Integer, default=30)  # За сколько дней уведомить о продлении
+    early_termination_fee = Column(Float, nullable=True)  # Штраф за досрочное расторжение
+
     # Documents
     contract_file_url = Column(String, nullable=True)  # PDF договора
+
+    # Soft delete
+    is_deleted = Column(Boolean, default=False)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
 
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now())
