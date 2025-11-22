@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from app.api.v1.endpoints import (
     auth, companies, users, properties, premises, tenants, contracts, payments,
-    leads, catalog, files, reports, notifications, search, bulk
+    leads, catalog, files, reports, notifications, search, bulk, audit, analytics
 )
 
 api_router = APIRouter()
@@ -22,3 +22,5 @@ api_router.include_router(reports.router, prefix="/reports", tags=["Reports & An
 api_router.include_router(notifications.router, prefix="/notifications", tags=["Notifications"])
 api_router.include_router(search.router, prefix="/search", tags=["Search"])
 api_router.include_router(bulk.router, prefix="/bulk", tags=["Bulk Operations"])
+api_router.include_router(audit.router, prefix="/audit", tags=["Audit Log"])
+api_router.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
