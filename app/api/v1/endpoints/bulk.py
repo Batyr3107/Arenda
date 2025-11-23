@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List, Dict, Any
 from pydantic import BaseModel
+from datetime import date
 from app.db.session import get_db
 from app.models.user import User
 from app.models.property import Premise, PremiseStatus
@@ -103,8 +105,6 @@ async def bulk_approve_payments_first_stage(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Bulk approve payments (first stage)"""
-    from datetime import date
-
     approved_count = 0
     failed = []
 
@@ -143,8 +143,6 @@ async def bulk_approve_payments_second_stage(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Bulk approve payments (second stage - final)"""
-    from datetime import date
-
     approved_count = 0
     failed = []
 
@@ -406,8 +404,6 @@ async def download_import_template(
     Download import template for entity type
     Available types: tenants, premises, payments
     """
-    from fastapi.responses import StreamingResponse
-
     templates = {
         "tenants": {
             "columns": ["full_name", "email", "phone", "id_number", "address", "notes"],

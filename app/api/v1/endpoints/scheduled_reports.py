@@ -11,6 +11,8 @@ from app.schemas.scheduled_report import (
     ScheduledReportResponse, ReportExecutionResponse
 )
 from app.api.deps import get_current_user, get_admin_or_higher
+from app.utils.repository import get_entity_or_404
+from app.utils.models import update_model_fields
 import logging
 
 router = APIRouter()
@@ -133,16 +135,7 @@ async def get_scheduled_report(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Get scheduled report by ID"""
-    result = await db.execute(
-        select(ScheduledReport).where(ScheduledReport.id == report_id)
-    )
-    report = result.scalar_one_or_none()
-
-    if not report:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Scheduled report not found"
-        )
+    report = await get_entity_or_404(db, ScheduledReport, report_id, "Scheduled report")
 
     return report
 
@@ -155,21 +148,11 @@ async def update_scheduled_report(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Update scheduled report"""
-    result = await db.execute(
-        select(ScheduledReport).where(ScheduledReport.id == report_id)
-    )
-    report = result.scalar_one_or_none()
-
-    if not report:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Scheduled report not found"
-        )
+    report = await get_entity_or_404(db, ScheduledReport, report_id, "Scheduled report")
 
     # Update fields
     update_data = report_data.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(report, field, value)
+    await update_model_fields(report, update_data)
 
     # Recalculate next run if schedule changed
     if any(key in update_data for key in ['frequency', 'day_of_week', 'day_of_month', 'time_of_day']):
@@ -193,16 +176,7 @@ async def delete_scheduled_report(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Delete scheduled report"""
-    result = await db.execute(
-        select(ScheduledReport).where(ScheduledReport.id == report_id)
-    )
-    report = result.scalar_one_or_none()
-
-    if not report:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Scheduled report not found"
-        )
+    report = await get_entity_or_404(db, ScheduledReport, report_id, "Scheduled report")
 
     await db.delete(report)
     await db.commit()
@@ -217,16 +191,7 @@ async def execute_scheduled_report_now(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Execute a scheduled report immediately"""
-    result = await db.execute(
-        select(ScheduledReport).where(ScheduledReport.id == report_id)
-    )
-    report = result.scalar_one_or_none()
-
-    if not report:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Scheduled report not found"
-        )
+    report = await get_entity_or_404(db, ScheduledReport, report_id, "Scheduled report")
 
     # Create execution record
     execution = ReportExecution(

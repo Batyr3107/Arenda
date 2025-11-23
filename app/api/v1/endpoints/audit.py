@@ -1,13 +1,14 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from typing import List
-from datetime import date
+from datetime import date, datetime, timedelta
 from app.db.session import get_db
 from app.models.user import User
 from app.models.audit_log import AuditLog, AuditAction
 from app.schemas.audit import AuditLogResponse
 from app.api.deps import get_admin_or_higher
+from app.utils.repository import get_entity_or_404
 
 router = APIRouter()
 
@@ -48,7 +49,6 @@ async def list_audit_logs(
         query = query.where(AuditLog.created_at >= date_from)
 
     if date_to:
-        from datetime import datetime, timedelta
         # Include the entire day
         date_to_end = datetime.combine(date_to, datetime.max.time())
         query = query.where(AuditLog.created_at <= date_to_end)
@@ -69,17 +69,7 @@ async def get_audit_log(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Get specific audit log entry"""
-    result = await db.execute(
-        select(AuditLog).where(AuditLog.id == log_id)
-    )
-    log = result.scalar_one_or_none()
-
-    if not log:
-        from fastapi import HTTPException, status
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Audit log not found"
-        )
+    log = await get_entity_or_404(db, AuditLog, log_id, "Audit log")
 
     return log
 
