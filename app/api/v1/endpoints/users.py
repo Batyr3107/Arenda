@@ -144,12 +144,8 @@ async def update_user(
             error_message="User with this email already exists"
         )
 
-    # Update fields
-    for field, value in user_data.model_dump(exclude_unset=True).items():
-        setattr(user, field, value)
-
-    await db.commit()
-    await db.refresh(user)
+    # Update fields using utility
+    user = await update_model_fields(db, user, user_data)
     return user
 
 
@@ -176,17 +172,9 @@ async def activate_deactivate_user(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_admin_or_higher)
 ):
-    """Activate or deactivate user (Admin or higher)"""
-    result = await db.execute(
-        select(User).where(User.id == user_id)
-    )
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+    """Activate or deactivate user (Admin or higher)
+    Refactored: Using get_entity_or_404 utility"""
+    user = await get_entity_or_404(db, User, user_id, "User")
 
     # Property admins can only activate/deactivate users from their company
     if current_user.role == UserRole.PROPERTY_ADMIN and user.company_id != current_user.company_id:
@@ -215,17 +203,9 @@ async def change_user_password(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_admin_or_higher)
 ):
-    """Change user password (Admin or higher)"""
-    result = await db.execute(
-        select(User).where(User.id == user_id)
-    )
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+    """Change user password (Admin or higher)
+    Refactored: Using get_entity_or_404 utility"""
+    user = await get_entity_or_404(db, User, user_id, "User")
 
     # Property admins can only change passwords for users from their company
     if current_user.role == UserRole.PROPERTY_ADMIN and user.company_id != current_user.company_id:
@@ -247,17 +227,9 @@ async def delete_user(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_super_admin)
 ):
-    """Delete user (Super Admin only)"""
-    result = await db.execute(
-        select(User).where(User.id == user_id)
-    )
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+    """Delete user (Super Admin only)
+    Refactored: Using get_entity_or_404 utility"""
+    user = await get_entity_or_404(db, User, user_id, "User")
 
     # Prevent deleting yourself
     if user.id == current_user.id:

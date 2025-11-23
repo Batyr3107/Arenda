@@ -48,24 +48,23 @@ async def bulk_publish_premises(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_admin_or_higher)
 ):
-    """Bulk publish/unpublish premises"""
-    updated_count = 0
+    """Bulk publish/unpublish premises
+    Refactored: N queries → 1 batch query (N+1 fix)"""
+    # Single batch query instead of N queries
+    result = await db.execute(
+        select(Premise).where(Premise.id.in_(request.premise_ids))
+    )
+    premises = result.scalars().all()
 
-    for premise_id in request.premise_ids:
-        result = await db.execute(
-            select(Premise).where(Premise.id == premise_id)
-        )
-        premise = result.scalar_one_or_none()
-
-        if premise:
-            premise.is_published = request.is_published
-            updated_count += 1
+    # Update all found premises
+    for premise in premises:
+        premise.is_published = request.is_published
 
     await db.commit()
 
     return {
-        "message": f"Updated {updated_count} premises",
-        "updated_count": updated_count,
+        "message": f"Updated {len(premises)} premises",
+        "updated_count": len(premises),
         "total_requested": len(request.premise_ids)
     }
 
@@ -76,24 +75,23 @@ async def bulk_update_premise_status(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_admin_or_higher)
 ):
-    """Bulk update premise status"""
-    updated_count = 0
+    """Bulk update premise status
+    Refactored: N queries → 1 batch query (N+1 fix)"""
+    # Single batch query instead of N queries
+    result = await db.execute(
+        select(Premise).where(Premise.id.in_(request.premise_ids))
+    )
+    premises = result.scalars().all()
 
-    for premise_id in request.premise_ids:
-        result = await db.execute(
-            select(Premise).where(Premise.id == premise_id)
-        )
-        premise = result.scalar_one_or_none()
-
-        if premise:
-            premise.status = request.status
-            updated_count += 1
+    # Update all found premises
+    for premise in premises:
+        premise.status = request.status
 
     await db.commit()
 
     return {
-        "message": f"Updated {updated_count} premises to status {request.status.value}",
-        "updated_count": updated_count,
+        "message": f"Updated {len(premises)} premises to status {request.status.value}",
+        "updated_count": len(premises),
         "total_requested": len(request.premise_ids)
     }
 
@@ -104,15 +102,19 @@ async def bulk_approve_payments_first_stage(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Bulk approve payments (first stage)"""
+    """Bulk approve payments (first stage)
+    Refactored: N queries → 1 batch query (N+1 fix)"""
+    # Single batch query instead of N queries
+    result = await db.execute(
+        select(Payment).where(Payment.id.in_(request.payment_ids))
+    )
+    payments = {p.id: p for p in result.scalars().all()}
+
     approved_count = 0
     failed = []
 
     for payment_id in request.payment_ids:
-        result = await db.execute(
-            select(Payment).where(Payment.id == payment_id)
-        )
-        payment = result.scalar_one_or_none()
+        payment = payments.get(payment_id)
 
         if not payment:
             failed.append({"id": payment_id, "reason": "Payment not found"})
@@ -142,15 +144,19 @@ async def bulk_approve_payments_second_stage(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_admin_or_higher)
 ):
-    """Bulk approve payments (second stage - final)"""
+    """Bulk approve payments (second stage - final)
+    Refactored: N queries → 1 batch query (N+1 fix)"""
+    # Single batch query instead of N queries
+    result = await db.execute(
+        select(Payment).where(Payment.id.in_(request.payment_ids))
+    )
+    payments = {p.id: p for p in result.scalars().all()}
+
     approved_count = 0
     failed = []
 
     for payment_id in request.payment_ids:
-        result = await db.execute(
-            select(Payment).where(Payment.id == payment_id)
-        )
-        payment = result.scalar_one_or_none()
+        payment = payments.get(payment_id)
 
         if not payment:
             failed.append({"id": payment_id, "reason": "Payment not found"})
@@ -182,27 +188,26 @@ async def bulk_mark_notifications_read(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Bulk mark notifications as read"""
-    updated_count = 0
-
-    for notification_id in request.notification_ids:
-        result = await db.execute(
-            select(Notification).where(
-                Notification.id == notification_id,
-                Notification.user_id == current_user.id
-            )
+    """Bulk mark notifications as read
+    Refactored: N queries → 1 batch query (N+1 fix)"""
+    # Single batch query instead of N queries
+    result = await db.execute(
+        select(Notification).where(
+            Notification.id.in_(request.notification_ids),
+            Notification.user_id == current_user.id
         )
-        notification = result.scalar_one_or_none()
+    )
+    notifications = result.scalars().all()
 
-        if notification:
-            notification.is_read = True
-            updated_count += 1
+    # Update all found notifications
+    for notification in notifications:
+        notification.is_read = True
 
     await db.commit()
 
     return {
-        "message": f"Marked {updated_count} notifications as read",
-        "updated_count": updated_count,
+        "message": f"Marked {len(notifications)} notifications as read",
+        "updated_count": len(notifications),
         "total_requested": len(request.notification_ids)
     }
 
@@ -213,27 +218,26 @@ async def bulk_delete_notifications(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Bulk delete notifications"""
-    deleted_count = 0
-
-    for notification_id in request.ids:
-        result = await db.execute(
-            select(Notification).where(
-                Notification.id == notification_id,
-                Notification.user_id == current_user.id
-            )
+    """Bulk delete notifications
+    Refactored: N queries → 1 batch query (N+1 fix)"""
+    # Single batch query instead of N queries
+    result = await db.execute(
+        select(Notification).where(
+            Notification.id.in_(request.ids),
+            Notification.user_id == current_user.id
         )
-        notification = result.scalar_one_or_none()
+    )
+    notifications = result.scalars().all()
 
-        if notification:
-            await db.delete(notification)
-            deleted_count += 1
+    # Delete all found notifications
+    for notification in notifications:
+        await db.delete(notification)
 
     await db.commit()
 
     return {
-        "message": f"Deleted {deleted_count} notifications",
-        "deleted_count": deleted_count,
+        "message": f"Deleted {len(notifications)} notifications",
+        "deleted_count": len(notifications),
         "total_requested": len(request.ids)
     }
 

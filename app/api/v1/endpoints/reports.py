@@ -80,13 +80,14 @@ async def _generic_export(
     model, to_dict_func, columns, sheet_name, filename_prefix,
     format: str, db: AsyncSession, filters=None
 ):
-    """Generic export helper - eliminates 150+ lines of duplication"""
+    """Generic export helper - eliminates 150+ lines of duplication
+    Refactored: Now accepts list of SQLAlchemy filter expressions"""
     query = select(model)
 
+    # Apply filters (expects list of SQLAlchemy expressions)
     if filters:
-        for field, value in filters.items():
-            if value is not None:
-                query = query.where(field == value)
+        for filter_expression in filters:
+            query = query.where(filter_expression)
 
     result = await db.execute(query.order_by(model.created_at.desc()))
     entities = result.scalars().all()
@@ -114,12 +115,14 @@ async def export_payments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Export payments to Excel or CSV"""
-    filters = {}
+    """Export payments to Excel or CSV
+    Refactored: Fixed filter construction (was using expressions as dict keys)"""
+    # Build filter list (not dict!)
+    filters = []
     if period_start:
-        filters[Payment.due_date >= period_start] = True
+        filters.append(Payment.due_date >= period_start)
     if period_end:
-        filters[Payment.due_date <= period_end] = True
+        filters.append(Payment.due_date <= period_end)
 
     columns = ['ID', 'Номер платежа', 'Договор ID', 'Тип платежа', 'Сумма',
                'Статус', 'Срок оплаты', 'Дата оплаты', 'Дней просрочки',
@@ -136,8 +139,10 @@ async def export_tenants(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Export tenants to Excel or CSV"""
-    filters = {Tenant.is_active: is_active} if is_active is not None else {}
+    """Export tenants to Excel or CSV
+    Refactored: Fixed filter construction (was using dict, now uses list)"""
+    # Build filter list
+    filters = [Tenant.is_active == is_active] if is_active is not None else []
     columns = ['ID', 'Название', 'Тип', 'БИН/ИИН', 'Email', 'Телефон',
                'Адрес', 'Активен', 'Создан', 'Обновлен']
 

@@ -164,17 +164,11 @@ async def delete_maintenance_request(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Delete maintenance request"""
-    result = await db.execute(
-        select(MaintenanceRequest).where(MaintenanceRequest.id == request_id)
+    """Delete maintenance request
+    Refactored: Using get_entity_or_404 utility"""
+    maintenance_request = await get_entity_or_404(
+        db, MaintenanceRequest, request_id, "Maintenance request"
     )
-    maintenance_request = result.scalar_one_or_none()
-
-    if not maintenance_request:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Maintenance request not found"
-        )
 
     await db.delete(maintenance_request)
     await db.commit()
@@ -191,18 +185,10 @@ async def add_comment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Add comment to maintenance request"""
+    """Add comment to maintenance request
+    Refactored: Using get_entity_or_404 utility"""
     # Verify request exists
-    result = await db.execute(
-        select(MaintenanceRequest).where(MaintenanceRequest.id == request_id)
-    )
-    maintenance_request = result.scalar_one_or_none()
-
-    if not maintenance_request:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Maintenance request not found"
-        )
+    await get_entity_or_404(db, MaintenanceRequest, request_id, "Maintenance request")
 
     comment = MaintenanceComment(
         maintenance_request_id=request_id,
