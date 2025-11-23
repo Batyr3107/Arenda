@@ -10,6 +10,8 @@ from app.schemas.property import (
     BuildingCreate, BuildingUpdate, BuildingResponse
 )
 from app.api.deps import get_moderator_or_higher
+from app.utils.repository import get_entity_or_404
+from app.utils.models import update_model_fields
 
 router = APIRouter()
 
@@ -54,15 +56,7 @@ async def get_property(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Get property by ID"""
-    result = await db.execute(select(Property).where(Property.id == property_id))
-    property_obj = result.scalar_one_or_none()
-
-    if not property_obj:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Property not found"
-        )
-
+    property_obj = await get_entity_or_404(db, Property, property_id, "Property")
     return property_obj
 
 
@@ -74,21 +68,8 @@ async def update_property(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Update property"""
-    result = await db.execute(select(Property).where(Property.id == property_id))
-    property_obj = result.scalar_one_or_none()
-
-    if not property_obj:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Property not found"
-        )
-
-    # Update fields
-    for field, value in property_data.model_dump(exclude_unset=True).items():
-        setattr(property_obj, field, value)
-
-    await db.commit()
-    await db.refresh(property_obj)
+    property_obj = await get_entity_or_404(db, Property, property_id, "Property")
+    property_obj = await update_model_fields(db, property_obj, property_data)
     return property_obj
 
 
@@ -99,15 +80,7 @@ async def delete_property(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Delete property"""
-    result = await db.execute(select(Property).where(Property.id == property_id))
-    property_obj = result.scalar_one_or_none()
-
-    if not property_obj:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Property not found"
-        )
-
+    property_obj = await get_entity_or_404(db, Property, property_id, "Property")
     await db.delete(property_obj)
     await db.commit()
 
@@ -122,12 +95,7 @@ async def create_building(
 ):
     """Create new building in property"""
     # Verify property exists
-    result = await db.execute(select(Property).where(Property.id == property_id))
-    if not result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Property not found"
-        )
+    await get_entity_or_404(db, Property, property_id, "Property")
 
     building = Building(**building_data.model_dump())
     db.add(building)

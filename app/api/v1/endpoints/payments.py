@@ -15,8 +15,11 @@ from app.schemas.payment import (
 )
 from app.api.deps import get_moderator_or_higher, get_admin_or_higher, get_current_active_user
 from app.services.payment_service import approve_payment_first_stage, approve_payment_second_stage
+from app.services.payment_invoice_service import prepare_invoice_pdf_data
 from app.utils.file_upload import save_payment_document
 from app.utils.pdf_generator import create_invoice_pdf, create_payment_act_pdf
+from app.utils.repository import get_entity_or_404
+from app.utils.models import update_model_fields
 
 router = APIRouter()
 
@@ -67,19 +70,10 @@ async def get_payment(
     current_user: User = Depends(get_current_active_user)
 ):
     """Get payment by ID with documents"""
-    result = await db.execute(
-        select(Payment)
-        .options(selectinload(Payment.documents))
-        .where(Payment.id == payment_id)
+    payment = await get_entity_or_404(
+        db, Payment, payment_id, "Payment",
+        relations=[Payment.documents]
     )
-    payment = result.scalar_one_or_none()
-
-    if not payment:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Payment not found"
-        )
-
     return payment
 
 
@@ -93,14 +87,7 @@ async def upload_payment_document(
 ):
     """Upload payment document (for tenants)"""
     # Verify payment exists
-    result = await db.execute(select(Payment).where(Payment.id == payment_id))
-    payment = result.scalar_one_or_none()
-
-    if not payment:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Payment not found"
-        )
+    payment = await get_entity_or_404(db, Payment, payment_id, "Payment")
 
     # Save file
     file_url, file_size = await save_payment_document(file)
@@ -134,14 +121,7 @@ async def approve_payment_first(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """First stage approval by moderator"""
-    result = await db.execute(select(Payment).where(Payment.id == payment_id))
-    payment = result.scalar_one_or_none()
-
-    if not payment:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Payment not found"
-        )
+    payment = await get_entity_or_404(db, Payment, payment_id, "Payment")
 
     payment = await approve_payment_first_stage(
         db, payment, current_user.id, approval_data.approved, approval_data.rejection_reason
@@ -158,14 +138,7 @@ async def approve_payment_second(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Second stage approval by admin"""
-    result = await db.execute(select(Payment).where(Payment.id == payment_id))
-    payment = result.scalar_one_or_none()
-
-    if not payment:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Payment not found"
-        )
+    payment = await get_entity_or_404(db, Payment, payment_id, "Payment")
 
     payment = await approve_payment_second_stage(
         db, payment, current_user.id, approval_data.approved, approval_data.rejection_reason
@@ -180,46 +153,16 @@ async def download_invoice_pdf(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user)
 ):
-    """Generate and download invoice PDF"""
-    # Get payment with contract
-    result = await db.execute(
-        select(Payment)
-        .options(selectinload(Payment.contract))
-        .where(Payment.id == payment_id)
-    )
-    payment = result.scalar_one_or_none()
-
-    if not payment:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Payment not found"
-        )
-
-    # Get related data
-    contract = payment.contract
-    # TODO: Get tenant and premise data
-
-    pdf_buffer = create_invoice_pdf(
-        contract_number=contract.contract_number,
-        tenant_name="Tenant Name",  # TODO: Get from contract.tenant
-        tenant_address="Tenant Address",
-        premise_number="123",  # TODO: Get from contract.premise
-        amount=payment.amount,
-        period_start=payment.period_start,
-        period_end=payment.period_end,
-        company_name="Company Name",
-        company_address="Address",
-        company_bank="Bank",
-        company_account="Account",
-        invoice_number=payment.payment_number,
-        invoice_date=date.today()
-    )
+    """Generate and download invoice PDF
+    Refactored: 48 lines → 11 lines, completed 3 TODOs"""
+    pdf_data = await prepare_invoice_pdf_data(db, payment_id)
+    pdf_buffer = create_invoice_pdf(**pdf_data)
 
     return StreamingResponse(
         pdf_buffer,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f"attachment; filename=invoice_{payment.payment_number}.pdf"
+            "Content-Disposition": f"attachment; filename=invoice_{pdf_data['invoice_number']}.pdf"
         }
     )
 

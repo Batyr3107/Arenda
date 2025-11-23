@@ -7,6 +7,8 @@ from app.models.property import Premise
 from app.models.user import User
 from app.schemas.property import PremiseCreate, PremiseUpdate, PremiseResponse
 from app.api.deps import get_moderator_or_higher
+from app.utils.repository import get_entity_or_404
+from app.utils.models import update_model_fields
 
 router = APIRouter()
 
@@ -57,15 +59,7 @@ async def get_premise(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Get premise by ID"""
-    result = await db.execute(select(Premise).where(Premise.id == premise_id))
-    premise = result.scalar_one_or_none()
-
-    if not premise:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Premise not found"
-        )
-
+    premise = await get_entity_or_404(db, Premise, premise_id, "Premise")
     return premise
 
 
@@ -77,21 +71,8 @@ async def update_premise(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Update premise"""
-    result = await db.execute(select(Premise).where(Premise.id == premise_id))
-    premise = result.scalar_one_or_none()
-
-    if not premise:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Premise not found"
-        )
-
-    # Update fields
-    for field, value in premise_data.model_dump(exclude_unset=True).items():
-        setattr(premise, field, value)
-
-    await db.commit()
-    await db.refresh(premise)
+    premise = await get_entity_or_404(db, Premise, premise_id, "Premise")
+    premise = await update_model_fields(db, premise, premise_data)
     return premise
 
 
@@ -102,15 +83,7 @@ async def delete_premise(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Delete premise"""
-    result = await db.execute(select(Premise).where(Premise.id == premise_id))
-    premise = result.scalar_one_or_none()
-
-    if not premise:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Premise not found"
-        )
-
+    premise = await get_entity_or_404(db, Premise, premise_id, "Premise")
     await db.delete(premise)
     await db.commit()
 
@@ -123,15 +96,7 @@ async def publish_premise(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Publish or unpublish premise to public catalog"""
-    result = await db.execute(select(Premise).where(Premise.id == premise_id))
-    premise = result.scalar_one_or_none()
-
-    if not premise:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Premise not found"
-        )
-
+    premise = await get_entity_or_404(db, Premise, premise_id, "Premise")
     premise.is_published = is_published
     await db.commit()
     await db.refresh(premise)

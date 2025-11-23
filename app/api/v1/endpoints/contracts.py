@@ -8,15 +8,19 @@ from datetime import date
 from app.db.session import get_db
 from app.models.contract import Contract, PaymentSchedule, ContractStatus
 from app.models.tenant import Tenant
-from app.models.property import Premise
+from app.models.property import Premise, Building, Property
 from app.models.user import User
+from app.models.settings import SystemSettings
 from app.schemas.contract import (
     ContractCreate, ContractUpdate, ContractResponse, ContractDetailResponse,
     PaymentScheduleResponse
 )
 from app.api.deps import get_moderator_or_higher
 from app.services.contract_service import generate_payment_schedule
+from app.services.contract_pdf_service import prepare_contract_pdf_data
 from app.utils.pdf_generator import create_contract_pdf
+from app.utils.repository import get_entity_or_404
+from app.utils.models import update_model_fields, create_model_from_schema
 
 router = APIRouter()
 
@@ -202,72 +206,24 @@ async def download_contract_pdf(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Generate and download contract PDF"""
-    # Get contract with related data
-    from app.models.settings import SystemSettings
-    from app.models.property import Building, Property
+    """
+    Generate and download contract PDF
 
-    result = await db.execute(
-        select(Contract)
-        .options(selectinload(Contract.tenant), selectinload(Contract.premise))
-        .where(Contract.id == contract_id)
-    )
-    contract = result.scalar_one_or_none()
-
-    if not contract:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Contract not found"
-        )
-
-    # Get system settings for company info
-    settings_result = await db.execute(select(SystemSettings).limit(1))
-    system_settings = settings_result.scalar_one_or_none()
-    company_name = system_settings.company_name if system_settings else "Property Management Company"
-
-    # Get full premise address
-    building = None
-    property_obj = None
-    if contract.premise.building_id:
-        building_result = await db.execute(select(Building).where(Building.id == contract.premise.building_id))
-        building = building_result.scalar_one_or_none()
-
-    if contract.premise.property_id:
-        property_result = await db.execute(select(Property).where(Property.id == contract.premise.property_id))
-        property_obj = property_result.scalar_one_or_none()
-
-    # Build full address
-    address_parts = []
-    if property_obj:
-        address_parts.append(property_obj.address)
-    if building:
-        address_parts.append(f"Building {building.name}")
-    address_parts.append(f"Premise {contract.premise.number}")
-    premise_address = ", ".join(address_parts)
+    Refactored: 73 lines → 11 lines
+    Business logic moved to contract_pdf_service (SRP, KISS)
+    """
+    # Prepare PDF data (all business logic in service layer)
+    pdf_data = await prepare_contract_pdf_data(db, contract_id)
 
     # Generate PDF
-    pdf_buffer = create_contract_pdf(
-        contract_number=contract.contract_number,
-        contract_date=contract.signed_date or date.today(),
-        company_name=company_name,
-        company_director="Director",
-        tenant_name=contract.tenant.full_name,
-        tenant_director=contract.tenant.full_name,
-        premise_number=contract.premise.number,
-        premise_area=contract.premise.area,
-        premise_address=premise_address,
-        start_date=contract.start_date,
-        end_date=contract.end_date,
-        monthly_rent=contract.monthly_rent,
-        deposit_amount=contract.deposit_amount,
-        special_conditions=contract.special_conditions
-    )
+    pdf_buffer = create_contract_pdf(**pdf_data)
 
+    # Return PDF as download
     return StreamingResponse(
         pdf_buffer,
         media_type="application/pdf",
         headers={
-            "Content-Disposition": f"attachment; filename=contract_{contract.contract_number}.pdf"
+            "Content-Disposition": f"attachment; filename=contract_{pdf_data['contract_number']}.pdf"
         }
     )
 

@@ -11,6 +11,8 @@ from app.schemas.tenant import (
     TenantContactCreate, TenantContactUpdate, TenantContactResponse
 )
 from app.api.deps import get_moderator_or_higher
+from app.utils.repository import get_entity_or_404, check_unique_field
+from app.utils.models import update_model_fields
 
 router = APIRouter()
 
@@ -24,14 +26,10 @@ async def create_tenant(
     """Create new tenant"""
     # Check if tenant with same BIN/IIN exists
     if tenant_data.bin_iin:
-        result = await db.execute(
-            select(Tenant).where(Tenant.bin_iin == tenant_data.bin_iin)
+        await check_unique_field(
+            db, Tenant, Tenant.bin_iin, tenant_data.bin_iin,
+            error_message="Tenant with this BIN/IIN already exists"
         )
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Tenant with this BIN/IIN already exists"
-            )
 
     tenant = Tenant(**tenant_data.model_dump())
     db.add(tenant)
@@ -77,19 +75,10 @@ async def get_tenant(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Get tenant by ID with contacts"""
-    result = await db.execute(
-        select(Tenant)
-        .options(selectinload(Tenant.contacts))
-        .where(Tenant.id == tenant_id)
+    tenant = await get_entity_or_404(
+        db, Tenant, tenant_id, "Tenant",
+        relations=[Tenant.contacts]
     )
-    tenant = result.scalar_one_or_none()
-
-    if not tenant:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tenant not found"
-        )
-
     return tenant
 
 
@@ -101,21 +90,8 @@ async def update_tenant(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Update tenant"""
-    result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
-    tenant = result.scalar_one_or_none()
-
-    if not tenant:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tenant not found"
-        )
-
-    # Update fields
-    for field, value in tenant_data.model_dump(exclude_unset=True).items():
-        setattr(tenant, field, value)
-
-    await db.commit()
-    await db.refresh(tenant)
+    tenant = await get_entity_or_404(db, Tenant, tenant_id, "Tenant")
+    tenant = await update_model_fields(db, tenant, tenant_data)
     return tenant
 
 
@@ -126,15 +102,7 @@ async def delete_tenant(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Delete tenant"""
-    result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
-    tenant = result.scalar_one_or_none()
-
-    if not tenant:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tenant not found"
-        )
-
+    tenant = await get_entity_or_404(db, Tenant, tenant_id, "Tenant")
     await db.delete(tenant)
     await db.commit()
 
@@ -149,12 +117,7 @@ async def create_tenant_contact(
 ):
     """Add contact to tenant"""
     # Verify tenant exists
-    result = await db.execute(select(Tenant).where(Tenant.id == tenant_id))
-    if not result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tenant not found"
-        )
+    await get_entity_or_404(db, Tenant, tenant_id, "Tenant")
 
     contact = TenantContact(tenant_id=tenant_id, **contact_data.model_dump(exclude={'tenant_id'}))
     db.add(contact)
@@ -187,20 +150,8 @@ async def update_tenant_contact(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Update tenant contact"""
-    result = await db.execute(select(TenantContact).where(TenantContact.id == contact_id))
-    contact = result.scalar_one_or_none()
-
-    if not contact:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Contact not found"
-        )
-
-    for field, value in contact_data.model_dump(exclude_unset=True).items():
-        setattr(contact, field, value)
-
-    await db.commit()
-    await db.refresh(contact)
+    contact = await get_entity_or_404(db, TenantContact, contact_id, "Contact")
+    contact = await update_model_fields(db, contact, contact_data)
     return contact
 
 
@@ -211,14 +162,6 @@ async def delete_tenant_contact(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Delete tenant contact"""
-    result = await db.execute(select(TenantContact).where(TenantContact.id == contact_id))
-    contact = result.scalar_one_or_none()
-
-    if not contact:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Contact not found"
-        )
-
+    contact = await get_entity_or_404(db, TenantContact, contact_id, "Contact")
     await db.delete(contact)
     await db.commit()
