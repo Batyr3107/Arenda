@@ -24,7 +24,8 @@ async def create_property(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Create new property (requires moderator or higher)"""
-    property_obj = Property(**property_data.model_dump())
+    property_dict = property_data.model_dump(exclude={'company_id'})
+    property_obj = Property(**property_dict, company_id=current_user.company_id)
     db.add(property_obj)
     await db.commit()
     await db.refresh(property_obj)
@@ -41,6 +42,7 @@ async def list_properties(
     """List all properties"""
     result = await db.execute(
         select(Property)
+        .where(Property.company_id == current_user.company_id)
         .offset(skip)
         .limit(limit)
         .order_by(Property.created_at.desc())
@@ -57,6 +59,8 @@ async def get_property(
 ):
     """Get property by ID"""
     property_obj = await get_entity_or_404(db, Property, property_id, "Property")
+    if property_obj.company_id != current_user.company_id:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     return property_obj
 
 
@@ -69,6 +73,8 @@ async def update_property(
 ):
     """Update property"""
     property_obj = await get_entity_or_404(db, Property, property_id, "Property")
+    if property_obj.company_id != current_user.company_id:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     property_obj = await update_model_fields(db, property_obj, property_data)
     return property_obj
 
@@ -81,6 +87,8 @@ async def delete_property(
 ):
     """Delete property"""
     property_obj = await get_entity_or_404(db, Property, property_id, "Property")
+    if property_obj.company_id != current_user.company_id:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     await db.delete(property_obj)
     await db.commit()
 
@@ -94,8 +102,10 @@ async def create_building(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Create new building in property"""
-    # Verify property exists
-    await get_entity_or_404(db, Property, property_id, "Property")
+    # Verify property exists and user owns it
+    property_obj = await get_entity_or_404(db, Property, property_id, "Property")
+    if property_obj.company_id != current_user.company_id:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
 
     building = Building(**building_data.model_dump())
     db.add(building)

@@ -46,11 +46,23 @@ async def create_user(
             detail="Only super admins can create super admin users"
         )
 
+    # ✅ SECURITY: Determine company_id based on role
+    if current_user.role == UserRole.SUPER_ADMIN:
+        # Super admins can specify company_id or create users for any company
+        if not user_data.company_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Super admins must specify company_id when creating users"
+            )
+        company_id = user_data.company_id
+    else:
+        # Regular admins can only create users in their own company
+        company_id = current_user.company_id
+
     # Hash password and create user
     hashed_password = get_password_hash(user_data.password)
-    user_dict = user_data.model_dump()
-    user_dict.pop('password')
-    user = User(**user_dict, hashed_password=hashed_password)
+    user_dict = user_data.model_dump(exclude={'password', 'company_id'})
+    user = User(**user_dict, hashed_password=hashed_password, company_id=company_id)
 
     db.add(user)
     await db.commit()
@@ -86,12 +98,11 @@ async def list_users(
     if is_active is not None:
         query = query.where(User.is_active == is_active)
 
-    if company_id:
-        query = query.where(User.company_id == company_id)
-
-    # Property admins can only see users from their company
-    if current_user.role == UserRole.PROPERTY_ADMIN:
+    # ✅ SECURITY: Non-super-admins can only see users from their company
+    if current_user.role != UserRole.SUPER_ADMIN:
         query = query.where(User.company_id == current_user.company_id)
+    elif company_id:  # Super admins can filter by company_id
+        query = query.where(User.company_id == company_id)
 
     query = query.offset(skip).limit(limit).order_by(User.created_at.desc())
 
@@ -106,11 +117,12 @@ async def get_user(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_admin_or_higher)
 ):
-    """Get user by ID (Admin or higher)"""
+    """Get user by ID (Admin or higher)
+    SECURITY FIX: Validates user ownership"""
     user = await get_entity_or_404(db, User, user_id, "User")
 
-    # Property admins can only view users from their company
-    if current_user.role == UserRole.PROPERTY_ADMIN and user.company_id != current_user.company_id:
+    # ✅ SECURITY: Non-super-admins can only view users from their company
+    if current_user.role != UserRole.SUPER_ADMIN and user.company_id != current_user.company_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions"

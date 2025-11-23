@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
 from app.db.session import get_db
-from app.models.property import Premise
+from app.models.property import Premise, Building, Property
 from app.models.user import User
 from app.schemas.property import PremiseCreate, PremiseUpdate, PremiseResponse
 from app.api.deps import get_moderator_or_higher
@@ -20,6 +20,19 @@ async def create_premise(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Create new premise"""
+    # Validate building ownership BEFORE creating premise
+    result = await db.execute(
+        select(Building)
+        .join(Property)
+        .where(
+            Building.id == premise_data.building_id,
+            Property.company_id == current_user.company_id
+        )
+    )
+    building = result.scalar_one_or_none()
+    if not building:
+        raise HTTPException(status_code=404, detail="Building not found or access denied")
+
     premise = Premise(**premise_data.model_dump())
     db.add(premise)
     await db.commit()
@@ -37,7 +50,8 @@ async def list_premises(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """List all premises with filters"""
-    query = select(Premise)
+    # Add company_id filter via JOIN
+    query = select(Premise).join(Building).join(Property).where(Property.company_id == current_user.company_id)
 
     if building_id:
         query = query.where(Premise.building_id == building_id)
@@ -59,7 +73,19 @@ async def get_premise(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Get premise by ID"""
-    premise = await get_entity_or_404(db, Premise, premise_id, "Premise")
+    # Validate ownership via building->property
+    result = await db.execute(
+        select(Premise)
+        .join(Building)
+        .join(Property)
+        .where(
+            Premise.id == premise_id,
+            Property.company_id == current_user.company_id
+        )
+    )
+    premise = result.scalar_one_or_none()
+    if not premise:
+        raise HTTPException(status_code=404, detail="Premise not found or access denied")
     return premise
 
 
@@ -71,7 +97,19 @@ async def update_premise(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Update premise"""
-    premise = await get_entity_or_404(db, Premise, premise_id, "Premise")
+    # Validate ownership via building->property
+    result = await db.execute(
+        select(Premise)
+        .join(Building)
+        .join(Property)
+        .where(
+            Premise.id == premise_id,
+            Property.company_id == current_user.company_id
+        )
+    )
+    premise = result.scalar_one_or_none()
+    if not premise:
+        raise HTTPException(status_code=404, detail="Premise not found or access denied")
     premise = await update_model_fields(db, premise, premise_data)
     return premise
 
@@ -83,7 +121,19 @@ async def delete_premise(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Delete premise"""
-    premise = await get_entity_or_404(db, Premise, premise_id, "Premise")
+    # Validate ownership via building->property
+    result = await db.execute(
+        select(Premise)
+        .join(Building)
+        .join(Property)
+        .where(
+            Premise.id == premise_id,
+            Property.company_id == current_user.company_id
+        )
+    )
+    premise = result.scalar_one_or_none()
+    if not premise:
+        raise HTTPException(status_code=404, detail="Premise not found or access denied")
     await db.delete(premise)
     await db.commit()
 
@@ -96,7 +146,19 @@ async def publish_premise(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Publish or unpublish premise to public catalog"""
-    premise = await get_entity_or_404(db, Premise, premise_id, "Premise")
+    # Validate ownership via building->property
+    result = await db.execute(
+        select(Premise)
+        .join(Building)
+        .join(Property)
+        .where(
+            Premise.id == premise_id,
+            Property.company_id == current_user.company_id
+        )
+    )
+    premise = result.scalar_one_or_none()
+    if not premise:
+        raise HTTPException(status_code=404, detail="Premise not found or access denied")
     premise.is_published = is_published
     await db.commit()
     await db.refresh(premise)
