@@ -75,7 +75,37 @@ async def get_lead_conversion(
     return report
 
 
-# Export endpoints
+# Export helper function (eliminates duplication)
+async def _generic_export(
+    model, to_dict_func, columns, sheet_name, filename_prefix,
+    format: str, db: AsyncSession, filters=None
+):
+    """Generic export helper - eliminates 150+ lines of duplication"""
+    query = select(model)
+
+    if filters:
+        for field, value in filters.items():
+            if value is not None:
+                query = query.where(field == value)
+
+    result = await db.execute(query.order_by(model.created_at.desc()))
+    entities = result.scalars().all()
+    data = to_dict_func(entities)
+
+    if format == "csv":
+        buffer = export_to_csv(data, columns)
+        media_type = "text/csv"
+        filename = f"{filename_prefix}_{date.today()}.csv"
+    else:
+        buffer = export_to_excel(data, columns, sheet_name)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        filename = f"{filename_prefix}_{date.today()}.xlsx"
+
+    return StreamingResponse(buffer, media_type=media_type,
+                            headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+
+# Export endpoints (refactored to use _generic_export)
 @router.get("/export/payments")
 async def export_payments(
     format: str = Query("xlsx", regex="^(xlsx|csv)$"),
@@ -85,39 +115,18 @@ async def export_payments(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Export payments to Excel or CSV"""
-    query = select(Payment)
-
+    filters = {}
     if period_start:
-        query = query.where(Payment.due_date >= period_start)
+        filters[Payment.due_date >= period_start] = True
     if period_end:
-        query = query.where(Payment.due_date <= period_end)
+        filters[Payment.due_date <= period_end] = True
 
-    result = await db.execute(query.order_by(Payment.created_at.desc()))
-    payments = result.scalars().all()
+    columns = ['ID', 'Номер платежа', 'Договор ID', 'Тип платежа', 'Сумма',
+               'Статус', 'Срок оплаты', 'Дата оплаты', 'Дней просрочки',
+               'Пеня', 'Создан', 'Описание']
 
-    # Convert to dict
-    data = payments_to_export_dict(payments)
-
-    columns = [
-        'ID', 'Номер платежа', 'Договор ID', 'Тип платежа', 'Сумма',
-        'Статус', 'Срок оплаты', 'Дата оплаты', 'Дней просрочки',
-        'Пеня', 'Создан', 'Описание'
-    ]
-
-    if format == "csv":
-        buffer = export_to_csv(data, columns)
-        media_type = "text/csv"
-        filename = f"payments_{date.today()}.csv"
-    else:
-        buffer = export_to_excel(data, columns, "Платежи")
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        filename = f"payments_{date.today()}.xlsx"
-
-    return StreamingResponse(
-        buffer,
-        media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
+    return await _generic_export(Payment, payments_to_export_dict, columns,
+                                 "Платежи", "payments", format, db, filters)
 
 
 @router.get("/export/tenants")
@@ -128,36 +137,12 @@ async def export_tenants(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Export tenants to Excel or CSV"""
-    query = select(Tenant)
+    filters = {Tenant.is_active: is_active} if is_active is not None else {}
+    columns = ['ID', 'Название', 'Тип', 'БИН/ИИН', 'Email', 'Телефон',
+               'Адрес', 'Активен', 'Создан', 'Обновлен']
 
-    if is_active is not None:
-        query = query.where(Tenant.is_active == is_active)
-
-    result = await db.execute(query.order_by(Tenant.created_at.desc()))
-    tenants = result.scalars().all()
-
-    # Convert to dict
-    data = tenants_to_export_dict(tenants)
-
-    columns = [
-        'ID', 'Название', 'Тип', 'БИН/ИИН', 'Email', 'Телефон',
-        'Адрес', 'Активен', 'Создан', 'Обновлен'
-    ]
-
-    if format == "csv":
-        buffer = export_to_csv(data, columns)
-        media_type = "text/csv"
-        filename = f"tenants_{date.today()}.csv"
-    else:
-        buffer = export_to_excel(data, columns, "Арендаторы")
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        filename = f"tenants_{date.today()}.xlsx"
-
-    return StreamingResponse(
-        buffer,
-        media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
+    return await _generic_export(Tenant, tenants_to_export_dict, columns,
+                                 "Арендаторы", "tenants", format, db, filters)
 
 
 @router.get("/export/contracts")
@@ -167,33 +152,13 @@ async def export_contracts(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Export contracts to Excel or CSV"""
-    result = await db.execute(select(Contract).order_by(Contract.created_at.desc()))
-    contracts = result.scalars().all()
+    columns = ['ID', 'Номер договора', 'Арендатор ID', 'Помещение ID',
+               'Дата начала', 'Дата окончания', 'Ежемесячная арендная плата',
+               'Депозит', 'Статус', 'Частота платежей', 'День платежа',
+               'Процент пени', 'Создан', 'Подписан']
 
-    # Convert to dict
-    data = contracts_to_export_dict(contracts)
-
-    columns = [
-        'ID', 'Номер договора', 'Арендатор ID', 'Помещение ID',
-        'Дата начала', 'Дата окончания', 'Ежемесячная арендная плата',
-        'Депозит', 'Статус', 'Частота платежей', 'День платежа',
-        'Процент пени', 'Создан', 'Подписан'
-    ]
-
-    if format == "csv":
-        buffer = export_to_csv(data, columns)
-        media_type = "text/csv"
-        filename = f"contracts_{date.today()}.csv"
-    else:
-        buffer = export_to_excel(data, columns, "Договоры")
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        filename = f"contracts_{date.today()}.xlsx"
-
-    return StreamingResponse(
-        buffer,
-        media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
+    return await _generic_export(Contract, contracts_to_export_dict, columns,
+                                 "Договоры", "contracts", format, db)
 
 
 @router.get("/export/properties")
@@ -203,31 +168,11 @@ async def export_properties(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Export properties to Excel or CSV"""
-    result = await db.execute(select(Property).order_by(Property.created_at.desc()))
-    properties = result.scalars().all()
+    columns = ['ID', 'Название', 'Тип', 'Адрес', 'Город', 'Общая площадь',
+               'Компания ID', 'Создан', 'Описание']
 
-    # Convert to dict
-    data = properties_to_export_dict(properties)
-
-    columns = [
-        'ID', 'Название', 'Тип', 'Адрес', 'Город', 'Общая площадь',
-        'Компания ID', 'Создан', 'Описание'
-    ]
-
-    if format == "csv":
-        buffer = export_to_csv(data, columns)
-        media_type = "text/csv"
-        filename = f"properties_{date.today()}.csv"
-    else:
-        buffer = export_to_excel(data, columns, "Объекты")
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        filename = f"properties_{date.today()}.xlsx"
-
-    return StreamingResponse(
-        buffer,
-        media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
+    return await _generic_export(Property, properties_to_export_dict, columns,
+                                 "Объекты", "properties", format, db)
 
 
 @router.get("/export/premises")
@@ -237,28 +182,8 @@ async def export_premises(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Export premises to Excel or CSV"""
-    result = await db.execute(select(Premise).order_by(Premise.created_at.desc()))
-    premises = result.scalars().all()
+    columns = ['ID', 'Номер', 'Здание ID', 'Этаж', 'Площадь', 'Тип',
+               'Статус', 'Цена в месяц', 'Опубликован', 'Создан', 'Описание']
 
-    # Convert to dict
-    data = premises_to_export_dict(premises)
-
-    columns = [
-        'ID', 'Номер', 'Здание ID', 'Этаж', 'Площадь', 'Тип',
-        'Статус', 'Цена в месяц', 'Опубликован', 'Создан', 'Описание'
-    ]
-
-    if format == "csv":
-        buffer = export_to_csv(data, columns)
-        media_type = "text/csv"
-        filename = f"premises_{date.today()}.csv"
-    else:
-        buffer = export_to_excel(data, columns, "Помещения")
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        filename = f"premises_{date.today()}.xlsx"
-
-    return StreamingResponse(
-        buffer,
-        media_type=media_type,
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
+    return await _generic_export(Premise, premises_to_export_dict, columns,
+                                 "Помещения", "premises", format, db)
