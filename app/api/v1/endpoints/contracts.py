@@ -32,22 +32,9 @@ async def create_contract(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Create new contract and generate payment schedule"""
-    # Verify tenant exists
-    tenant_result = await db.execute(select(Tenant).where(Tenant.id == contract_data.tenant_id))
-    if not tenant_result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tenant not found"
-        )
-
-    # Verify premise exists and is available
-    premise_result = await db.execute(select(Premise).where(Premise.id == contract_data.premise_id))
-    premise = premise_result.scalar_one_or_none()
-    if not premise:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Premise not found"
-        )
+    # Verify tenant and premise exist
+    await get_entity_or_404(db, Tenant, contract_data.tenant_id, "Tenant")
+    premise = await get_entity_or_404(db, Premise, contract_data.premise_id, "Premise")
 
     # Create contract
     contract = Contract(**contract_data.model_dump())
@@ -102,19 +89,10 @@ async def get_contract(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Get contract by ID with payment schedules"""
-    result = await db.execute(
-        select(Contract)
-        .options(selectinload(Contract.payment_schedules))
-        .where(Contract.id == contract_id)
+    contract = await get_entity_or_404(
+        db, Contract, contract_id, "Contract",
+        relations=[Contract.payment_schedules]
     )
-    contract = result.scalar_one_or_none()
-
-    if not contract:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Contract not found"
-        )
-
     return contract
 
 
@@ -126,21 +104,8 @@ async def update_contract(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Update contract"""
-    result = await db.execute(select(Contract).where(Contract.id == contract_id))
-    contract = result.scalar_one_or_none()
-
-    if not contract:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Contract not found"
-        )
-
-    # Update fields
-    for field, value in contract_data.model_dump(exclude_unset=True).items():
-        setattr(contract, field, value)
-
-    await db.commit()
-    await db.refresh(contract)
+    contract = await get_entity_or_404(db, Contract, contract_id, "Contract")
+    contract = await update_model_fields(db, contract, contract_data)
     return contract
 
 
@@ -151,20 +116,11 @@ async def activate_contract(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Activate contract and mark premise as occupied"""
-    result = await db.execute(select(Contract).where(Contract.id == contract_id))
-    contract = result.scalar_one_or_none()
-
-    if not contract:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Contract not found"
-        )
-
+    contract = await get_entity_or_404(db, Contract, contract_id, "Contract")
     contract.status = ContractStatus.ACTIVE
 
     # Mark premise as occupied
-    premise_result = await db.execute(select(Premise).where(Premise.id == contract.premise_id))
-    premise = premise_result.scalar_one()
+    premise = await get_entity_or_404(db, Premise, contract.premise_id, "Premise")
     premise.status = "occupied"
 
     await db.commit()
@@ -179,20 +135,11 @@ async def terminate_contract(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Terminate contract and free up premise"""
-    result = await db.execute(select(Contract).where(Contract.id == contract_id))
-    contract = result.scalar_one_or_none()
-
-    if not contract:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Contract not found"
-        )
-
+    contract = await get_entity_or_404(db, Contract, contract_id, "Contract")
     contract.status = ContractStatus.TERMINATED
 
     # Mark premise as available
-    premise_result = await db.execute(select(Premise).where(Premise.id == contract.premise_id))
-    premise = premise_result.scalar_one()
+    premise = await get_entity_or_404(db, Premise, contract.premise_id, "Premise")
     premise.status = "available"
 
     await db.commit()

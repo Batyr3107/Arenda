@@ -5,12 +5,15 @@ from typing import List, Optional
 from datetime import datetime
 from app.db.session import get_db
 from app.models.user import User
+from app.models.property import Premise
 from app.models.maintenance import MaintenanceRequest, MaintenanceComment, MaintenanceStatus, MaintenancePriority
 from app.schemas.maintenance import (
     MaintenanceRequestCreate, MaintenanceRequestUpdate, MaintenanceRequestResolve,
     MaintenanceRequestResponse, MaintenanceCommentCreate, MaintenanceCommentResponse
 )
 from app.api.deps import get_current_user, get_moderator_or_higher
+from app.utils.repository import get_entity_or_404
+from app.utils.models import update_model_fields
 
 router = APIRouter()
 
@@ -22,19 +25,8 @@ async def create_maintenance_request(
     current_user: User = Depends(get_current_user)
 ):
     """Create a new maintenance request"""
-
     # Get premise to populate building and property
-    from app.models.property import Premise
-    premise_result = await db.execute(
-        select(Premise).where(Premise.id == request_data.premise_id)
-    )
-    premise = premise_result.scalar_one_or_none()
-
-    if not premise:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Premise not found"
-        )
+    premise = await get_entity_or_404(db, Premise, request_data.premise_id, "Premise")
 
     maintenance_request = MaintenanceRequest(
         **request_data.model_dump(),
@@ -96,16 +88,9 @@ async def get_maintenance_request(
     current_user: User = Depends(get_current_user)
 ):
     """Get maintenance request by ID"""
-    result = await db.execute(
-        select(MaintenanceRequest).where(MaintenanceRequest.id == request_id)
+    maintenance_request = await get_entity_or_404(
+        db, MaintenanceRequest, request_id, "Maintenance request"
     )
-    maintenance_request = result.scalar_one_or_none()
-
-    if not maintenance_request:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Maintenance request not found"
-        )
 
     # Check access
     if current_user.role.value == "tenant" and maintenance_request.reported_by_id != current_user.id:
@@ -125,16 +110,9 @@ async def update_maintenance_request(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Update maintenance request"""
-    result = await db.execute(
-        select(MaintenanceRequest).where(MaintenanceRequest.id == request_id)
+    maintenance_request = await get_entity_or_404(
+        db, MaintenanceRequest, request_id, "Maintenance request"
     )
-    maintenance_request = result.scalar_one_or_none()
-
-    if not maintenance_request:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Maintenance request not found"
-        )
 
     # Update fields
     update_data = request_data.model_dump(exclude_unset=True)
@@ -161,16 +139,9 @@ async def resolve_maintenance_request(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Resolve maintenance request"""
-    result = await db.execute(
-        select(MaintenanceRequest).where(MaintenanceRequest.id == request_id)
+    maintenance_request = await get_entity_or_404(
+        db, MaintenanceRequest, request_id, "Maintenance request"
     )
-    maintenance_request = result.scalar_one_or_none()
-
-    if not maintenance_request:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Maintenance request not found"
-        )
 
     maintenance_request.status = MaintenanceStatus.RESOLVED
     maintenance_request.resolution_notes = resolve_data.resolution_notes
