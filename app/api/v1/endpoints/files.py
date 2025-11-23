@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, status
 from typing import List, Callable, Awaitable, Tuple
 from app.models.user import User
-from app.api.deps import get_moderator_or_higher
+from app.api.deps import get_moderator_or_higher, get_admin_or_higher
 from app.utils.file_upload import (
     save_premise_photo,
     save_property_photo,
@@ -80,15 +80,18 @@ async def upload_contract_document(
 @router.delete("/delete")
 async def delete_uploaded_file(
     file_url: str,
-    current_user: User = Depends(get_moderator_or_higher)
+    current_user: User = Depends(get_admin_or_higher)  # ✅ Restrict to admins
 ):
-    """Delete uploaded file"""
-    success = delete_file(file_url)
+    """Delete uploaded file
+    SECURITY NOTE: Only admins can delete files.
+    TODO: Add UploadedFile tracking table for granular permissions"""
 
+    # Additional validation: ensure file_url is not empty and looks valid
+    if not file_url or not file_url.startswith(('http://', 'https://', '/uploads/')):
+        raise HTTPException(status_code=400, detail="Invalid file URL")
+
+    success = delete_file(file_url)
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
+        raise HTTPException(status_code=404, detail="File not found or could not be deleted")
 
     return {"message": "File deleted successfully"}

@@ -93,6 +93,7 @@ async def check_unique_field(
     field,
     value: Any,
     exclude_id: Optional[int] = None,
+    company_id: Optional[int] = None,  # ✅ NEW
     error_message: Optional[str] = None
 ) -> bool:
     """
@@ -104,6 +105,7 @@ async def check_unique_field(
         field: Model field to check (e.g., User.email)
         value: Value to check for uniqueness
         exclude_id: ID to exclude from check (for updates)
+        company_id: If provided and model has company_id, scope uniqueness to company
         error_message: Custom error message
 
     Raises:
@@ -123,11 +125,21 @@ async def check_unique_field(
             db, User, User.email, new_email,
             exclude_id=user.id
         )
+
+        # With company scope:
+        await check_unique_field(
+            db, Property, Property.name, "Downtown Suite",
+            company_id=current_user.company_id
+        )
     """
     query = select(model).where(field == value)
 
     if exclude_id is not None:
         query = query.where(model.id != exclude_id)
+
+    # ✅ NEW: Scope to company if supported
+    if company_id is not None and hasattr(model, 'company_id'):
+        query = query.where(model.company_id == company_id)
 
     result = await db.execute(query)
     existing = result.scalar_one_or_none()

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -14,6 +14,7 @@ from app.schemas.reports import (
     LeadConversionReport
 )
 from app.api.deps import get_moderator_or_higher
+from app.utils.repository import get_entity_or_404
 from app.services.report_service import (
     get_occupancy_report,
     get_financial_report,
@@ -48,6 +49,11 @@ async def get_property_occupancy(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Get occupancy report for a property"""
+    # SECURITY: Validate property ownership BEFORE generating report
+    property_obj = await get_entity_or_404(db, Property, property_id, "Property")
+    if current_user.role != "super_admin" and property_obj.company_id != current_user.company_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+
     report = await get_occupancy_report(db, property_id)
     return report
 
@@ -61,6 +67,12 @@ async def get_financial(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Get financial report for a period"""
+    # SECURITY: If report has property_id, validate ownership
+    if property_id:
+        property_obj = await get_entity_or_404(db, Property, property_id, "Property")
+        if current_user.role != "super_admin" and property_obj.company_id != current_user.company_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions")
+
     report = await get_financial_report(db, period_start, period_end, property_id)
     return report
 

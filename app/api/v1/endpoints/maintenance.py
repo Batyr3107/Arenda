@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import datetime
 from app.db.session import get_db
 from app.models.user import User
-from app.models.property import Premise
+from app.models.property import Premise, Building, Property
 from app.models.maintenance import MaintenanceRequest, MaintenanceComment, MaintenanceStatus, MaintenancePriority
 from app.schemas.maintenance import (
     MaintenanceRequestCreate, MaintenanceRequestUpdate, MaintenanceRequestResolve,
@@ -25,8 +25,16 @@ async def create_maintenance_request(
     current_user: User = Depends(get_current_user)
 ):
     """Create a new maintenance request"""
-    # Get premise to populate building and property
-    premise = await get_entity_or_404(db, Premise, request_data.premise_id, "Premise")
+    # Validate premise ownership via Building→Property
+    result = await db.execute(
+        select(Premise).join(Building).join(Property).where(
+            Premise.id == request_data.premise_id,
+            Property.company_id == current_user.company_id
+        )
+    )
+    premise = result.scalar_one_or_none()
+    if not premise:
+        raise HTTPException(status_code=404, detail="Premise not found or access denied")
 
     maintenance_request = MaintenanceRequest(
         **request_data.model_dump(),
@@ -54,7 +62,10 @@ async def list_maintenance_requests(
     current_user: User = Depends(get_current_user)
 ):
     """List maintenance requests"""
-    query = select(MaintenanceRequest)
+    # Filter by company via premise→building→property
+    query = select(MaintenanceRequest).join(Premise).join(Building).join(Property).where(
+        Property.company_id == current_user.company_id
+    )
 
     # Filters
     if status_filter:
@@ -88,11 +99,20 @@ async def get_maintenance_request(
     current_user: User = Depends(get_current_user)
 ):
     """Get maintenance request by ID"""
-    maintenance_request = await get_entity_or_404(
-        db, MaintenanceRequest, request_id, "Maintenance request"
+    # Validate ownership via building→property
+    result = await db.execute(
+        select(MaintenanceRequest)
+        .join(Premise).join(Building).join(Property)
+        .where(
+            MaintenanceRequest.id == request_id,
+            Property.company_id == current_user.company_id
+        )
     )
+    maintenance_request = result.scalar_one_or_none()
+    if not maintenance_request:
+        raise HTTPException(status_code=404, detail="Maintenance request not found or access denied")
 
-    # Check access
+    # Check access: tenant can only see their own requests
     if current_user.role.value == "tenant" and maintenance_request.reported_by_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -110,9 +130,18 @@ async def update_maintenance_request(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Update maintenance request"""
-    maintenance_request = await get_entity_or_404(
-        db, MaintenanceRequest, request_id, "Maintenance request"
+    # Validate ownership
+    result = await db.execute(
+        select(MaintenanceRequest)
+        .join(Premise).join(Building).join(Property)
+        .where(
+            MaintenanceRequest.id == request_id,
+            Property.company_id == current_user.company_id
+        )
     )
+    maintenance_request = result.scalar_one_or_none()
+    if not maintenance_request:
+        raise HTTPException(status_code=404, detail="Maintenance request not found or access denied")
 
     # Update fields
     update_data = request_data.model_dump(exclude_unset=True)
@@ -139,9 +168,18 @@ async def resolve_maintenance_request(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Resolve maintenance request"""
-    maintenance_request = await get_entity_or_404(
-        db, MaintenanceRequest, request_id, "Maintenance request"
+    # Validate ownership
+    result = await db.execute(
+        select(MaintenanceRequest)
+        .join(Premise).join(Building).join(Property)
+        .where(
+            MaintenanceRequest.id == request_id,
+            Property.company_id == current_user.company_id
+        )
     )
+    maintenance_request = result.scalar_one_or_none()
+    if not maintenance_request:
+        raise HTTPException(status_code=404, detail="Maintenance request not found or access denied")
 
     maintenance_request.status = MaintenanceStatus.RESOLVED
     maintenance_request.resolution_notes = resolve_data.resolution_notes
@@ -164,11 +202,19 @@ async def delete_maintenance_request(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Delete maintenance request
-    Refactored: Using get_entity_or_404 utility"""
-    maintenance_request = await get_entity_or_404(
-        db, MaintenanceRequest, request_id, "Maintenance request"
+    """Delete maintenance request"""
+    # Validate ownership
+    result = await db.execute(
+        select(MaintenanceRequest)
+        .join(Premise).join(Building).join(Property)
+        .where(
+            MaintenanceRequest.id == request_id,
+            Property.company_id == current_user.company_id
+        )
     )
+    maintenance_request = result.scalar_one_or_none()
+    if not maintenance_request:
+        raise HTTPException(status_code=404, detail="Maintenance request not found or access denied")
 
     await db.delete(maintenance_request)
     await db.commit()
@@ -185,10 +231,19 @@ async def add_comment(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Add comment to maintenance request
-    Refactored: Using get_entity_or_404 utility"""
-    # Verify request exists
-    await get_entity_or_404(db, MaintenanceRequest, request_id, "Maintenance request")
+    """Add comment to maintenance request"""
+    # Validate ownership via building→property
+    result = await db.execute(
+        select(MaintenanceRequest)
+        .join(Premise).join(Building).join(Property)
+        .where(
+            MaintenanceRequest.id == request_id,
+            Property.company_id == current_user.company_id
+        )
+    )
+    maintenance_request = result.scalar_one_or_none()
+    if not maintenance_request:
+        raise HTTPException(status_code=404, detail="Maintenance request not found or access denied")
 
     comment = MaintenanceComment(
         maintenance_request_id=request_id,
@@ -211,6 +266,19 @@ async def list_comments(
     current_user: User = Depends(get_current_user)
 ):
     """List comments for maintenance request"""
+    # Validate ownership via building→property
+    result = await db.execute(
+        select(MaintenanceRequest)
+        .join(Premise).join(Building).join(Property)
+        .where(
+            MaintenanceRequest.id == request_id,
+            Property.company_id == current_user.company_id
+        )
+    )
+    maintenance_request = result.scalar_one_or_none()
+    if not maintenance_request:
+        raise HTTPException(status_code=404, detail="Maintenance request not found or access denied")
+
     query = select(MaintenanceComment).where(
         MaintenanceComment.maintenance_request_id == request_id
     )

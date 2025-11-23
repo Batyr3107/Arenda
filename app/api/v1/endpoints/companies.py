@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from typing import List
 from app.db.session import get_db
 from app.models.company import Company
 from app.models.user import User
+from app.models.contract import Contract, ContractStatus
+from app.models.tenant import Tenant
 from app.schemas.company import CompanyCreate, CompanyUpdate, CompanyResponse
 from app.api.deps import get_super_admin
 from app.utils.repository import get_entity_or_404, check_unique_field
@@ -101,5 +103,35 @@ async def delete_company(
 ):
     """Delete company (Super Admin only)"""
     company = await get_entity_or_404(db, Company, company_id, "Company")
+
+    # SECURITY: Check for active contracts before deletion
+    result = await db.execute(
+        select(func.count(Contract.id))
+        .join(Tenant)
+        .where(
+            Tenant.company_id == company_id,
+            Contract.status == ContractStatus.ACTIVE
+        )
+    )
+    active_contracts = result.scalar()
+
+    if active_contracts > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delete company with {active_contracts} active contracts"
+        )
+
+    # Check for any users
+    result = await db.execute(
+        select(func.count(User.id)).where(User.company_id == company_id)
+    )
+    users_count = result.scalar()
+
+    if users_count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delete company with {users_count} users. Delete users first."
+        )
+
     await db.delete(company)
     await db.commit()
