@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, extract, and_
+from sqlalchemy import select, func, extract, and_, case
 from datetime import date, timedelta, datetime
 from decimal import Decimal
 from typing import List, Dict
@@ -105,17 +105,18 @@ async def get_occupancy_trend(
     Get occupancy trend over time
     Note: This is current snapshot - historical tracking would require additional table
     """
-    # Get current stats
-    total_result = await db.execute(
-        select(func.count(Premise.id))
+    # Get current stats in a single query
+    result = await db.execute(
+        select(
+            func.count(Premise.id).label('total'),
+            func.count(case(
+                (Premise.status == PremiseStatus.OCCUPIED, 1)
+            )).label('occupied')
+        )
     )
-    total_premises = total_result.scalar() or 0
-
-    occupied_result = await db.execute(
-        select(func.count(Premise.id))
-        .where(Premise.status == PremiseStatus.OCCUPIED)
-    )
-    occupied = occupied_result.scalar() or 0
+    row = result.first()
+    total_premises = row.total or 0
+    occupied = row.occupied or 0
 
     available = total_premises - occupied
     occupancy_rate = (occupied / total_premises * 100) if total_premises > 0 else 0
@@ -147,23 +148,23 @@ async def get_tenant_retention(
     Get tenant retention statistics
     Shows how well the business retains tenants
     """
-    # Total tenants
-    total_result = await db.execute(
-        select(func.count(Tenant.id))
+    # Get tenant counts in a single query
+    tenant_result = await db.execute(
+        select(
+            func.count(Tenant.id).label('total'),
+            func.count(case(
+                (Tenant.is_active == True, 1)
+            )).label('active')
+        )
     )
-    total_tenants = total_result.scalar() or 0
-
-    # Active tenants
-    active_result = await db.execute(
-        select(func.count(Tenant.id))
-        .where(Tenant.is_active == True)
-    )
-    active_tenants = active_result.scalar() or 0
+    tenant_row = tenant_result.first()
+    total_tenants = tenant_row.total or 0
+    active_tenants = tenant_row.active or 0
 
     inactive_tenants = total_tenants - active_tenants
     retention_rate = (active_tenants / total_tenants * 100) if total_tenants > 0 else 0
 
-    # Average contract length
+    # Average contract length (separate query as it's from a different table)
     avg_result = await db.execute(
         select(
             func.avg(
@@ -195,56 +196,34 @@ async def get_payment_discipline(
     """
     start_date = date.today() - timedelta(days=months * 30)
 
-    # Total payments
-    total_result = await db.execute(
-        select(func.count(Payment.id))
-        .where(Payment.due_date >= start_date)
+    # Get all payment statistics in a single query
+    result = await db.execute(
+        select(
+            func.count(Payment.id).label('total'),
+            func.count(case(
+                (and_(Payment.status == PaymentStatus.APPROVED,
+                      Payment.payment_date <= Payment.due_date), 1)
+            )).label('on_time'),
+            func.count(case(
+                (and_(Payment.status == PaymentStatus.APPROVED,
+                      Payment.payment_date > Payment.due_date), 1)
+            )).label('late'),
+            func.count(case(
+                (Payment.status == PaymentStatus.OVERDUE, 1)
+            )).label('overdue'),
+            func.avg(case(
+                (Payment.days_overdue > 0, Payment.days_overdue)
+            )).label('avg_days_late')
+        ).where(Payment.due_date >= start_date)
     )
-    total_payments = total_result.scalar() or 0
-
-    # On-time payments (paid before or on due date)
-    on_time_result = await db.execute(
-        select(func.count(Payment.id))
-        .where(
-            Payment.due_date >= start_date,
-            Payment.status == PaymentStatus.APPROVED,
-            Payment.payment_date <= Payment.due_date
-        )
-    )
-    on_time = on_time_result.scalar() or 0
-
-    # Late payments (paid after due date)
-    late_result = await db.execute(
-        select(func.count(Payment.id))
-        .where(
-            Payment.due_date >= start_date,
-            Payment.status == PaymentStatus.APPROVED,
-            Payment.payment_date > Payment.due_date
-        )
-    )
-    late = late_result.scalar() or 0
-
-    # Overdue payments
-    overdue_result = await db.execute(
-        select(func.count(Payment.id))
-        .where(
-            Payment.due_date >= start_date,
-            Payment.status == PaymentStatus.OVERDUE
-        )
-    )
-    overdue = overdue_result.scalar() or 0
+    row = result.first()
+    total_payments = row.total or 0
+    on_time = row.on_time or 0
+    late = row.late or 0
+    overdue = row.overdue or 0
+    avg_days_late = row.avg_days_late or 0
 
     on_time_rate = (on_time / total_payments * 100) if total_payments > 0 else 0
-
-    # Average days late
-    avg_days_result = await db.execute(
-        select(func.avg(Payment.days_overdue))
-        .where(
-            Payment.due_date >= start_date,
-            Payment.days_overdue > 0
-        )
-    )
-    avg_days_late = avg_days_result.scalar() or 0
 
     return PaymentDiscipline(
         total_payments=total_payments,
