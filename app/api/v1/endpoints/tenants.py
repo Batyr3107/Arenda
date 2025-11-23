@@ -148,9 +148,17 @@ async def create_tenant_contact(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Add contact to tenant"""
-    # Verify tenant exists
-    await get_entity_or_404(db, Tenant, tenant_id, "Tenant")
+    """Add contact to tenant
+    CRITICAL FIX: Added tenant ownership validation"""
+    # Verify tenant exists and belongs to user's company
+    tenant = await get_entity_or_404(db, Tenant, tenant_id, "Tenant")
+
+    # ✅ SECURITY: Verify tenant belongs to user's company
+    if tenant.company_id != current_user.company_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
 
     contact = TenantContact(tenant_id=tenant_id, **contact_data.model_dump(exclude={'tenant_id'}))
     db.add(contact)
@@ -165,7 +173,18 @@ async def list_tenant_contacts(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Get all contacts for a tenant"""
+    """Get all contacts for a tenant
+    CRITICAL FIX: Added tenant ownership validation"""
+    # Verify tenant exists and belongs to user's company
+    tenant = await get_entity_or_404(db, Tenant, tenant_id, "Tenant")
+
+    # ✅ SECURITY: Verify tenant belongs to user's company
+    if tenant.company_id != current_user.company_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+
     result = await db.execute(
         select(TenantContact)
         .where(TenantContact.tenant_id == tenant_id)
@@ -182,8 +201,25 @@ async def update_tenant_contact(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Update tenant contact"""
-    contact = await get_entity_or_404(db, TenantContact, contact_id, "Contact")
+    """Update tenant contact
+    CRITICAL FIX: Added tenant ownership validation via contact relationship"""
+    # Load contact with tenant relationship
+    result = await db.execute(
+        select(TenantContact)
+        .options(selectinload(TenantContact.tenant))
+        .where(TenantContact.id == contact_id)
+    )
+    contact = result.scalar_one_or_none()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    # ✅ SECURITY: Verify tenant belongs to user's company
+    if contact.tenant.company_id != current_user.company_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+
     contact = await update_model_fields(db, contact, contact_data)
     return contact
 
@@ -194,7 +230,24 @@ async def delete_tenant_contact(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Delete tenant contact"""
-    contact = await get_entity_or_404(db, TenantContact, contact_id, "Contact")
+    """Delete tenant contact
+    CRITICAL FIX: Added tenant ownership validation via contact relationship"""
+    # Load contact with tenant relationship
+    result = await db.execute(
+        select(TenantContact)
+        .options(selectinload(TenantContact.tenant))
+        .where(TenantContact.id == contact_id)
+    )
+    contact = result.scalar_one_or_none()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    # ✅ SECURITY: Verify tenant belongs to user's company
+    if contact.tenant.company_id != current_user.company_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+
     await db.delete(contact)
     await db.commit()

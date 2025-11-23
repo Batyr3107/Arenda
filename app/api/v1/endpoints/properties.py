@@ -120,7 +120,18 @@ async def list_buildings(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """List all buildings in property"""
+    """List all buildings in property
+    CRITICAL FIX: Added property ownership validation"""
+    # Verify property exists and belongs to user's company
+    property_obj = await get_entity_or_404(db, Property, property_id, "Property")
+
+    # ✅ SECURITY: Verify property belongs to user's company
+    if property_obj.company_id != current_user.company_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+
     result = await db.execute(
         select(Building)
         .where(Building.property_id == property_id)

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from datetime import date
 from app.db.session import get_db
 from app.models.user import User
-from app.models.property import Premise, PremiseStatus
+from app.models.property import Premise, PremiseStatus, PremiseType
 from app.models.payment import Payment, PaymentStatus
 from app.models.notification import Notification
 from app.models.tenant import Tenant
@@ -450,8 +450,7 @@ async def import_tenants_from_file(
                     created_count += 1
 
             except Exception as e:
-                # ✅ Savepoint auto-rollbacks on exception
-                await db.rollback()  # Rollback only this row
+                # ✅ HIGH-1 FIX: Savepoint auto-rollbacks on exception, no explicit rollback needed
                 failed.append({
                     "row": index + 2,
                     "data": row.to_dict(),
@@ -556,7 +555,7 @@ async def import_premises_from_file(
                     created_count += 1
 
             except Exception as e:
-                await db.rollback()  # ✅ Rollback only this row
+                # ✅ HIGH-1 FIX: Savepoint auto-rollbacks on exception, no explicit rollback needed
                 failed.append({
                     "row": index + 2,
                     "data": row.to_dict(),

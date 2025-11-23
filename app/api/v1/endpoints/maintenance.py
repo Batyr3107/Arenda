@@ -4,7 +4,7 @@ from sqlalchemy import select, and_, or_
 from typing import List, Optional
 from datetime import datetime
 from app.db.session import get_db
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.property import Premise, Building, Property
 from app.models.maintenance import MaintenanceRequest, MaintenanceComment, MaintenanceStatus, MaintenancePriority
 from app.schemas.maintenance import (
@@ -24,13 +24,20 @@ async def create_maintenance_request(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Create a new maintenance request"""
-    # Validate premise ownership via Building→Property
+    """Create a new maintenance request
+    CRITICAL FIX: Added eager loading to access premise.building.property_id"""
+    from sqlalchemy.orm import selectinload
+
+    # Validate premise ownership via Building→Property + eager load building
     result = await db.execute(
-        select(Premise).join(Building).join(Property).where(
+        select(Premise)
+        .join(Building)
+        .join(Property)
+        .where(
             Premise.id == request_data.premise_id,
             Property.company_id == current_user.company_id
         )
+        .options(selectinload(Premise.building))  # ✅ Eager load to access building.property_id
     )
     premise = result.scalar_one_or_none()
     if not premise:
@@ -40,7 +47,7 @@ async def create_maintenance_request(
         **request_data.model_dump(),
         reported_by_id=current_user.id,
         building_id=premise.building_id,
-        property_id=premise.property_id
+        property_id=premise.building.property_id  # ✅ Access through relationship
     )
 
     db.add(maintenance_request)
@@ -80,8 +87,8 @@ async def list_maintenance_requests(
     if assigned_to_me:
         query = query.where(MaintenanceRequest.assigned_to_id == current_user.id)
 
-    # If user is tenant, only show their requests
-    if current_user.role.value == "tenant":
+    # If user is tenant, only show their requests - HIGH-4 FIX: Use enum comparison
+    if current_user.role == UserRole.TENANT:
         query = query.where(MaintenanceRequest.reported_by_id == current_user.id)
 
     query = query.offset(skip).limit(limit).order_by(MaintenanceRequest.created_at.desc())
@@ -112,8 +119,8 @@ async def get_maintenance_request(
     if not maintenance_request:
         raise HTTPException(status_code=404, detail="Maintenance request not found or access denied")
 
-    # Check access: tenant can only see their own requests
-    if current_user.role.value == "tenant" and maintenance_request.reported_by_id != current_user.id:
+    # Check access: tenant can only see their own requests - HIGH-4 FIX: Use enum comparison
+    if current_user.role == UserRole.TENANT and maintenance_request.reported_by_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view this request"
@@ -283,8 +290,8 @@ async def list_comments(
         MaintenanceComment.maintenance_request_id == request_id
     )
 
-    # If user is tenant, don't show internal comments
-    if current_user.role.value == "tenant":
+    # If user is tenant, don't show internal comments - HIGH-4 FIX: Use enum comparison
+    if current_user.role == UserRole.TENANT:
         query = query.where(MaintenanceComment.is_internal == False)
 
     query = query.order_by(MaintenanceComment.created_at.asc())

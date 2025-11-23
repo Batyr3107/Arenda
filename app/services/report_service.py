@@ -79,7 +79,8 @@ async def get_financial_report(
     period_end: date,
     property_id: int = None
 ) -> FinancialReport:
-    """Get financial report for a period"""
+    """Get financial report for a period
+    CRITICAL FIX: All payment queries now filter by property_id when specified"""
     # Base query for payments in period
     payment_query = select(Payment).where(
         and_(
@@ -100,43 +101,52 @@ async def get_financial_report(
     )
     expected_revenue = expected_result.scalar() or 0.0
 
-    # Received payments (approved)
-    received_result = await db.execute(
-        select(func.sum(Payment.amount)).where(
-            and_(
-                Payment.due_date >= period_start,
-                Payment.due_date <= period_end,
-                Payment.status == PaymentStatus.APPROVED
-            )
+    # Received payments (approved) - CRITICAL FIX: Added property_id filtering
+    received_query = select(func.sum(Payment.amount)).where(
+        and_(
+            Payment.due_date >= period_start,
+            Payment.due_date <= period_end,
+            Payment.status == PaymentStatus.APPROVED
         )
     )
+    if property_id:
+        received_query = received_query.join(Contract).join(Premise).join(Building).where(
+            Building.property_id == property_id
+        )
+    received_result = await db.execute(received_query)
     received_payments = received_result.scalar() or 0.0
 
-    # Pending payments
-    pending_result = await db.execute(
-        select(func.sum(Payment.amount)).where(
-            and_(
-                Payment.due_date >= period_start,
-                Payment.due_date <= period_end,
-                or_(
-                    Payment.status == PaymentStatus.PENDING,
-                    Payment.status == PaymentStatus.PENDING_APPROVAL
-                )
+    # Pending payments - CRITICAL FIX: Added property_id filtering
+    pending_query = select(func.sum(Payment.amount)).where(
+        and_(
+            Payment.due_date >= period_start,
+            Payment.due_date <= period_end,
+            or_(
+                Payment.status == PaymentStatus.PENDING,
+                Payment.status == PaymentStatus.PENDING_APPROVAL
             )
         )
     )
+    if property_id:
+        pending_query = pending_query.join(Contract).join(Premise).join(Building).where(
+            Building.property_id == property_id
+        )
+    pending_result = await db.execute(pending_query)
     pending_payments = pending_result.scalar() or 0.0
 
-    # Overdue payments
-    overdue_result = await db.execute(
-        select(func.sum(Payment.amount + Payment.late_fee)).where(
-            and_(
-                Payment.due_date >= period_start,
-                Payment.due_date <= period_end,
-                Payment.status == PaymentStatus.OVERDUE
-            )
+    # Overdue payments - CRITICAL FIX: Added property_id filtering
+    overdue_query = select(func.sum(Payment.amount + Payment.late_fee)).where(
+        and_(
+            Payment.due_date >= period_start,
+            Payment.due_date <= period_end,
+            Payment.status == PaymentStatus.OVERDUE
         )
     )
+    if property_id:
+        overdue_query = overdue_query.join(Contract).join(Premise).join(Building).where(
+            Building.property_id == property_id
+        )
+    overdue_result = await db.execute(overdue_query)
     overdue_payments = overdue_result.scalar() or 0.0
 
     total_debt = pending_payments + overdue_payments
@@ -172,12 +182,13 @@ async def get_dashboard_metrics(db: AsyncSession, company_id: int = None) -> Das
     premises_result = await db.execute(premises_query)
     total_premises = premises_result.scalar() or 0
 
-    # Active contracts
-    contracts_result = await db.execute(
-        select(func.count(Contract.id)).where(
-            Contract.status == ContractStatus.ACTIVE
-        )
+    # Active contracts - CRITICAL FIX: Added company_id filtering
+    contracts_query = select(func.count(Contract.id)).where(
+        Contract.status == ContractStatus.ACTIVE
     )
+    if company_id:
+        contracts_query = contracts_query.join(Tenant).where(Tenant.company_id == company_id)
+    contracts_result = await db.execute(contracts_query)
     total_active_contracts = contracts_result.scalar() or 0
 
     # Active tenants
@@ -191,63 +202,80 @@ async def get_dashboard_metrics(db: AsyncSession, company_id: int = None) -> Das
     )
     total_active_tenants = tenants_result.scalar() or 0
 
-    # Total leads
-    leads_result = await db.execute(
-        select(func.count(Lead.id))
-    )
+    # Total leads - CRITICAL FIX: Added company_id filtering
+    leads_query = select(func.count(Lead.id))
+    if company_id:
+        leads_query = leads_query.where(Lead.company_id == company_id)
+    leads_result = await db.execute(leads_query)
     total_leads = leads_result.scalar() or 0
 
-    # New leads today
+    # New leads today - CRITICAL FIX: Added company_id filtering
     today = date.today()
-    new_leads_result = await db.execute(
-        select(func.count(Lead.id)).where(
-            func.date(Lead.created_at) == today
-        )
+    new_leads_query = select(func.count(Lead.id)).where(
+        func.date(Lead.created_at) == today
     )
+    if company_id:
+        new_leads_query = new_leads_query.where(Lead.company_id == company_id)
+    new_leads_result = await db.execute(new_leads_query)
     new_leads_today = new_leads_result.scalar() or 0
 
-    # Occupancy rate
-    occupied_result = await db.execute(
-        select(func.count(Premise.id)).where(
-            Premise.status == PremiseStatus.OCCUPIED
-        )
+    # Occupancy rate - CRITICAL FIX: Added company_id filtering
+    occupied_query = select(func.count(Premise.id)).where(
+        Premise.status == PremiseStatus.OCCUPIED
     )
+    if company_id:
+        occupied_query = occupied_query.join(Building).join(Property).where(
+            Property.company_id == company_id
+        )
+    occupied_result = await db.execute(occupied_query)
     occupied = occupied_result.scalar() or 0
     occupancy_rate = (occupied / total_premises * 100) if total_premises > 0 else 0
 
-    # Monthly revenue (current month)
+    # Monthly revenue (current month) - CRITICAL FIX: Added company_id filtering
     month_start = date(today.year, today.month, 1)
-    revenue_result = await db.execute(
-        select(func.sum(Payment.amount)).where(
-            and_(
-                Payment.payment_date >= month_start,
-                Payment.status == PaymentStatus.APPROVED
-            )
+    revenue_query = select(func.sum(Payment.amount)).where(
+        and_(
+            Payment.payment_date >= month_start,
+            Payment.status == PaymentStatus.APPROVED
         )
     )
+    if company_id:
+        revenue_query = revenue_query.join(Contract).join(Tenant).where(
+            Tenant.company_id == company_id
+        )
+    revenue_result = await db.execute(revenue_query)
     monthly_revenue = revenue_result.scalar() or 0.0
 
-    # Pending approvals
-    pending_result = await db.execute(
-        select(func.count(Payment.id)).where(
-            Payment.status == PaymentStatus.PENDING_APPROVAL
-        )
+    # Pending approvals - CRITICAL FIX: Added company_id filtering
+    pending_query = select(func.count(Payment.id)).where(
+        Payment.status == PaymentStatus.PENDING_APPROVAL
     )
+    if company_id:
+        pending_query = pending_query.join(Contract).join(Tenant).where(
+            Tenant.company_id == company_id
+        )
+    pending_result = await db.execute(pending_query)
     pending_approvals = pending_result.scalar() or 0
 
-    # Overdue payments
-    overdue_count_result = await db.execute(
-        select(func.count(Payment.id)).where(
-            Payment.status == PaymentStatus.OVERDUE
-        )
+    # Overdue payments - CRITICAL FIX: Added company_id filtering
+    overdue_count_query = select(func.count(Payment.id)).where(
+        Payment.status == PaymentStatus.OVERDUE
     )
+    if company_id:
+        overdue_count_query = overdue_count_query.join(Contract).join(Tenant).where(
+            Tenant.company_id == company_id
+        )
+    overdue_count_result = await db.execute(overdue_count_query)
     overdue_payments = overdue_count_result.scalar() or 0
 
-    overdue_amount_result = await db.execute(
-        select(func.sum(Payment.amount + Payment.late_fee)).where(
-            Payment.status == PaymentStatus.OVERDUE
-        )
+    overdue_amount_query = select(func.sum(Payment.amount + Payment.late_fee)).where(
+        Payment.status == PaymentStatus.OVERDUE
     )
+    if company_id:
+        overdue_amount_query = overdue_amount_query.join(Contract).join(Tenant).where(
+            Tenant.company_id == company_id
+        )
+    overdue_amount_result = await db.execute(overdue_amount_query)
     overdue_amount = overdue_amount_result.scalar() or 0.0
 
     return DashboardMetrics(
@@ -265,59 +293,68 @@ async def get_dashboard_metrics(db: AsyncSession, company_id: int = None) -> Das
     )
 
 
-async def get_lead_conversion_report(db: AsyncSession) -> LeadConversionReport:
-    """Get lead conversion statistics"""
-    # Total leads
-    total_result = await db.execute(
-        select(func.count(Lead.id))
-    )
+async def get_lead_conversion_report(db: AsyncSession, company_id: int = None) -> LeadConversionReport:
+    """Get lead conversion statistics
+    CRITICAL FIX: Added company_id parameter and filtering to all queries"""
+    # Total leads - CRITICAL FIX: Added company_id filtering
+    total_query = select(func.count(Lead.id))
+    if company_id:
+        total_query = total_query.where(Lead.company_id == company_id)
+    total_result = await db.execute(total_query)
     total_leads = total_result.scalar() or 0
 
-    # Counts by status
-    new_result = await db.execute(
-        select(func.count(Lead.id)).where(Lead.status == LeadStatus.NEW)
-    )
+    # Counts by status - CRITICAL FIX: Added company_id filtering
+    new_query = select(func.count(Lead.id)).where(Lead.status == LeadStatus.NEW)
+    if company_id:
+        new_query = new_query.where(Lead.company_id == company_id)
+    new_result = await db.execute(new_query)
     new_leads = new_result.scalar() or 0
 
-    contacted_result = await db.execute(
-        select(func.count(Lead.id)).where(Lead.status == LeadStatus.CONTACTED)
-    )
+    contacted_query = select(func.count(Lead.id)).where(Lead.status == LeadStatus.CONTACTED)
+    if company_id:
+        contacted_query = contacted_query.where(Lead.company_id == company_id)
+    contacted_result = await db.execute(contacted_query)
     contacted_leads = contacted_result.scalar() or 0
 
-    viewing_scheduled_result = await db.execute(
-        select(func.count(Lead.id)).where(Lead.status == LeadStatus.VIEWING_SCHEDULED)
-    )
+    viewing_scheduled_query = select(func.count(Lead.id)).where(Lead.status == LeadStatus.VIEWING_SCHEDULED)
+    if company_id:
+        viewing_scheduled_query = viewing_scheduled_query.where(Lead.company_id == company_id)
+    viewing_scheduled_result = await db.execute(viewing_scheduled_query)
     viewing_scheduled = viewing_scheduled_result.scalar() or 0
 
-    viewed_result = await db.execute(
-        select(func.count(Lead.id)).where(Lead.status == LeadStatus.VIEWED)
-    )
+    viewed_query = select(func.count(Lead.id)).where(Lead.status == LeadStatus.VIEWED)
+    if company_id:
+        viewed_query = viewed_query.where(Lead.company_id == company_id)
+    viewed_result = await db.execute(viewed_query)
     viewed = viewed_result.scalar() or 0
 
-    contracts_result = await db.execute(
-        select(func.count(Lead.id)).where(Lead.status == LeadStatus.CONTRACT_SIGNED)
-    )
+    contracts_query = select(func.count(Lead.id)).where(Lead.status == LeadStatus.CONTRACT_SIGNED)
+    if company_id:
+        contracts_query = contracts_query.where(Lead.company_id == company_id)
+    contracts_result = await db.execute(contracts_query)
     contracts_signed = contracts_result.scalar() or 0
 
-    rejected_result = await db.execute(
-        select(func.count(Lead.id)).where(
-            or_(
-                Lead.status == LeadStatus.REJECTED_BY_CLIENT,
-                Lead.status == LeadStatus.REJECTED_BY_COMPANY,
-                Lead.status == LeadStatus.LOST
-            )
+    rejected_query = select(func.count(Lead.id)).where(
+        or_(
+            Lead.status == LeadStatus.REJECTED_BY_CLIENT,
+            Lead.status == LeadStatus.REJECTED_BY_COMPANY,
+            Lead.status == LeadStatus.LOST
         )
     )
+    if company_id:
+        rejected_query = rejected_query.where(Lead.company_id == company_id)
+    rejected_result = await db.execute(rejected_query)
     rejected = rejected_result.scalar() or 0
 
     conversion_rate = (contracts_signed / total_leads * 100) if total_leads > 0 else 0
 
-    # Average processing days (for converted leads)
-    avg_days_result = await db.execute(
-        select(func.avg(
-            func.julianday(Lead.updated_at) - func.julianday(Lead.created_at)
-        )).where(Lead.status == LeadStatus.CONTRACT_SIGNED)
-    )
+    # Average processing days (for converted leads) - CRITICAL FIX: Added company_id filtering
+    avg_days_query = select(func.avg(
+        func.julianday(Lead.updated_at) - func.julianday(Lead.created_at)
+    )).where(Lead.status == LeadStatus.CONTRACT_SIGNED)
+    if company_id:
+        avg_days_query = avg_days_query.where(Lead.company_id == company_id)
+    avg_days_result = await db.execute(avg_days_query)
     average_processing_days = avg_days_result.scalar() or 0.0
 
     return LeadConversionReport(

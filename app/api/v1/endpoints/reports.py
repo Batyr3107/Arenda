@@ -82,19 +82,31 @@ async def get_lead_conversion(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Get lead conversion statistics"""
-    report = await get_lead_conversion_report(db)
+    """Get lead conversion statistics
+    CRITICAL FIX: Added company_id filtering"""
+    company_id = current_user.company_id if current_user.role != "super_admin" else None
+    report = await get_lead_conversion_report(db, company_id)
     return report
 
 
 # Export helper function (eliminates duplication)
 async def _generic_export(
     model, to_dict_func, columns, sheet_name, filename_prefix,
-    format: str, db: AsyncSession, filters=None
+    format: str, db: AsyncSession, filters=None, joins=None
 ):
     """Generic export helper - eliminates 150+ lines of duplication
-    Refactored: Now accepts list of SQLAlchemy filter expressions"""
+    CRITICAL FIX: Added joins parameter to support company_id filtering via relationships
+
+    Args:
+        joins: List of (model, onclause) tuples for JOIN operations
+               Example: [(Contract, Payment.contract_id == Contract.id)]
+    """
     query = select(model)
+
+    # Apply JOINs (for company_id filtering via relationships)
+    if joins:
+        for join_model, onclause in joins:
+            query = query.join(join_model, onclause, isouter=False)
 
     # Apply filters (expects list of SQLAlchemy expressions)
     if filters:
@@ -128,20 +140,30 @@ async def export_payments(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Export payments to Excel or CSV
-    Refactored: Fixed filter construction (was using expressions as dict keys)"""
-    # Build filter list (not dict!)
+    CRITICAL FIX: Added company_id filtering via Contract→Tenant relationship"""
+    # Build filter list
     filters = []
     if period_start:
         filters.append(Payment.due_date >= period_start)
     if period_end:
         filters.append(Payment.due_date <= period_end)
 
+    # SECURITY: Filter by company_id
+    if current_user.role != "super_admin":
+        filters.append(Tenant.company_id == current_user.company_id)
+
+    # JOIN Payment→Contract→Tenant to access company_id
+    joins = [
+        (Contract, Payment.contract_id == Contract.id),
+        (Tenant, Contract.tenant_id == Tenant.id)
+    ]
+
     columns = ['ID', 'Номер платежа', 'Договор ID', 'Тип платежа', 'Сумма',
                'Статус', 'Срок оплаты', 'Дата оплаты', 'Дней просрочки',
                'Пеня', 'Создан', 'Описание']
 
     return await _generic_export(Payment, payments_to_export_dict, columns,
-                                 "Платежи", "payments", format, db, filters)
+                                 "Платежи", "payments", format, db, filters, joins)
 
 
 @router.get("/export/tenants")
@@ -152,9 +174,16 @@ async def export_tenants(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Export tenants to Excel or CSV
-    Refactored: Fixed filter construction (was using dict, now uses list)"""
+    CRITICAL FIX: Added company_id filtering"""
     # Build filter list
-    filters = [Tenant.is_active == is_active] if is_active is not None else []
+    filters = []
+    if is_active is not None:
+        filters.append(Tenant.is_active == is_active)
+
+    # SECURITY: Filter by company_id (Tenant has company_id directly)
+    if current_user.role != "super_admin":
+        filters.append(Tenant.company_id == current_user.company_id)
+
     columns = ['ID', 'Название', 'Тип', 'БИН/ИИН', 'Email', 'Телефон',
                'Адрес', 'Активен', 'Создан', 'Обновлен']
 
@@ -168,14 +197,22 @@ async def export_contracts(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Export contracts to Excel or CSV"""
+    """Export contracts to Excel or CSV
+    CRITICAL FIX: Added company_id filtering via Tenant relationship"""
+    # SECURITY: Filter by company_id via Contract→Tenant
+    filters = []
+    if current_user.role != "super_admin":
+        filters.append(Tenant.company_id == current_user.company_id)
+
+    joins = [(Tenant, Contract.tenant_id == Tenant.id)]
+
     columns = ['ID', 'Номер договора', 'Арендатор ID', 'Помещение ID',
                'Дата начала', 'Дата окончания', 'Ежемесячная арендная плата',
                'Депозит', 'Статус', 'Частота платежей', 'День платежа',
                'Процент пени', 'Создан', 'Подписан']
 
     return await _generic_export(Contract, contracts_to_export_dict, columns,
-                                 "Договоры", "contracts", format, db)
+                                 "Договоры", "contracts", format, db, filters, joins)
 
 
 @router.get("/export/properties")
@@ -184,12 +221,18 @@ async def export_properties(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Export properties to Excel or CSV"""
+    """Export properties to Excel or CSV
+    CRITICAL FIX: Added company_id filtering"""
+    # SECURITY: Filter by company_id (Property has company_id directly)
+    filters = []
+    if current_user.role != "super_admin":
+        filters.append(Property.company_id == current_user.company_id)
+
     columns = ['ID', 'Название', 'Тип', 'Адрес', 'Город', 'Общая площадь',
                'Компания ID', 'Создан', 'Описание']
 
     return await _generic_export(Property, properties_to_export_dict, columns,
-                                 "Объекты", "properties", format, db)
+                                 "Объекты", "properties", format, db, filters)
 
 
 @router.get("/export/premises")
@@ -198,9 +241,20 @@ async def export_premises(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Export premises to Excel or CSV"""
+    """Export premises to Excel or CSV
+    CRITICAL FIX: Added company_id filtering via Building→Property relationship"""
+    # SECURITY: Filter by company_id via Premise→Building→Property
+    filters = []
+    if current_user.role != "super_admin":
+        filters.append(Property.company_id == current_user.company_id)
+
+    joins = [
+        (Building, Premise.building_id == Building.id),
+        (Property, Building.property_id == Property.id)
+    ]
+
     columns = ['ID', 'Номер', 'Здание ID', 'Этаж', 'Площадь', 'Тип',
                'Статус', 'Цена в месяц', 'Опубликован', 'Создан', 'Описание']
 
     return await _generic_export(Premise, premises_to_export_dict, columns,
-                                 "Помещения", "premises", format, db)
+                                 "Помещения", "premises", format, db, filters, joins)
