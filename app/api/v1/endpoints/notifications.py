@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from typing import List
 from datetime import datetime
 from app.db.session import get_db
@@ -8,6 +8,7 @@ from app.models.notification import Notification
 from app.models.user import User
 from app.schemas.notification import NotificationResponse, NotificationMarkRead
 from app.api.deps import get_current_active_user
+from app.utils.repository import get_entity_or_404
 
 router = APIRouter()
 
@@ -39,7 +40,6 @@ async def get_unread_count(
     current_user: User = Depends(get_current_active_user)
 ):
     """Get count of unread notifications"""
-    from sqlalchemy import func
     result = await db.execute(
         select(func.count(Notification.id)).where(
             Notification.user_id == current_user.id,
@@ -57,15 +57,9 @@ async def mark_notification_read(
     current_user: User = Depends(get_current_active_user)
 ):
     """Mark notification as read"""
-    result = await db.execute(
-        select(Notification).where(
-            Notification.id == notification_id,
-            Notification.user_id == current_user.id
-        )
-    )
-    notification = result.scalar_one_or_none()
+    notification = await get_entity_or_404(db, Notification, notification_id, "Notification")
 
-    if not notification:
+    if notification.user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Notification not found"

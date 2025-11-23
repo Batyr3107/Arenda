@@ -10,6 +10,8 @@ from app.schemas.settings import (
     EmailTemplateCreate, EmailTemplateUpdate, EmailTemplateResponse
 )
 from app.api.deps import get_super_admin, get_admin_or_higher
+from app.utils.repository import get_entity_or_404, check_unique_field
+from app.utils.models import update_model_fields
 
 router = APIRouter()
 
@@ -62,11 +64,8 @@ async def update_system_settings(
         )
 
     # Update fields
-    for field, value in settings_data.model_dump(exclude_unset=True).items():
-        setattr(settings, field, value)
-
+    settings = await update_model_fields(db, settings, settings_data)
     settings.updated_by_id = current_user.id
-
     await db.commit()
     await db.refresh(settings)
 
@@ -86,14 +85,10 @@ async def create_email_template(
     Super Admin only
     """
     # Check if template with this name exists
-    result = await db.execute(
-        select(EmailTemplate).where(EmailTemplate.name == template_data.name)
+    await check_unique_field(
+        db, EmailTemplate, EmailTemplate.name, template_data.name,
+        error_message="Template with this name already exists"
     )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Template with this name already exists"
-        )
 
     template = EmailTemplate(
         **template_data.model_dump(),
@@ -136,17 +131,7 @@ async def get_email_template(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Get email template by ID"""
-    result = await db.execute(
-        select(EmailTemplate).where(EmailTemplate.id == template_id)
-    )
-    template = result.scalar_one_or_none()
-
-    if not template:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Email template not found"
-        )
-
+    template = await get_entity_or_404(db, EmailTemplate, template_id, "Email template")
     return template
 
 
@@ -179,23 +164,11 @@ async def update_email_template(
     current_user: User = Depends(get_super_admin)
 ):
     """Update email template"""
-    result = await db.execute(
-        select(EmailTemplate).where(EmailTemplate.id == template_id)
-    )
-    template = result.scalar_one_or_none()
-
-    if not template:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Email template not found"
-        )
+    template = await get_entity_or_404(db, EmailTemplate, template_id, "Email template")
 
     # Update fields
-    for field, value in template_data.model_dump(exclude_unset=True).items():
-        setattr(template, field, value)
-
+    template = await update_model_fields(db, template, template_data)
     template.updated_by_id = current_user.id
-
     await db.commit()
     await db.refresh(template)
 
@@ -209,17 +182,7 @@ async def delete_email_template(
     current_user: User = Depends(get_super_admin)
 ):
     """Delete email template"""
-    result = await db.execute(
-        select(EmailTemplate).where(EmailTemplate.id == template_id)
-    )
-    template = result.scalar_one_or_none()
-
-    if not template:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Email template not found"
-        )
-
+    template = await get_entity_or_404(db, EmailTemplate, template_id, "Email template")
     await db.delete(template)
     await db.commit()
 

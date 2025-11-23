@@ -11,6 +11,8 @@ from app.schemas.webhook import (
 )
 from app.api.deps import get_admin_or_higher
 from app.utils.webhook import send_webhook
+from app.utils.repository import get_entity_or_404
+from app.utils.models import update_model_fields
 
 router = APIRouter()
 
@@ -75,16 +77,7 @@ async def get_webhook(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Get webhook by ID"""
-    result = await db.execute(
-        select(Webhook).where(Webhook.id == webhook_id)
-    )
-    webhook = result.scalar_one_or_none()
-
-    if not webhook:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Webhook not found"
-        )
+    webhook = await get_entity_or_404(db, Webhook, webhook_id, "Webhook")
 
     return webhook
 
@@ -97,16 +90,7 @@ async def update_webhook(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Update webhook"""
-    result = await db.execute(
-        select(Webhook).where(Webhook.id == webhook_id)
-    )
-    webhook = result.scalar_one_or_none()
-
-    if not webhook:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Webhook not found"
-        )
+    webhook = await get_entity_or_404(db, Webhook, webhook_id, "Webhook")
 
     # Update fields
     update_data = webhook_data.model_dump(exclude_unset=True)
@@ -119,11 +103,7 @@ async def update_webhook(
     if 'url' in update_data:
         update_data['url'] = str(update_data['url'])
 
-    for field, value in update_data.items():
-        setattr(webhook, field, value)
-
-    await db.commit()
-    await db.refresh(webhook)
+    webhook = await update_model_fields(db, webhook, update_data)
 
     return webhook
 
@@ -135,16 +115,7 @@ async def delete_webhook(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Delete webhook"""
-    result = await db.execute(
-        select(Webhook).where(Webhook.id == webhook_id)
-    )
-    webhook = result.scalar_one_or_none()
-
-    if not webhook:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Webhook not found"
-        )
+    webhook = await get_entity_or_404(db, Webhook, webhook_id, "Webhook")
 
     await db.delete(webhook)
     await db.commit()
@@ -162,16 +133,7 @@ async def test_webhook(
     """
     Test webhook by sending a test payload
     """
-    result = await db.execute(
-        select(Webhook).where(Webhook.id == webhook_id)
-    )
-    webhook = result.scalar_one_or_none()
-
-    if not webhook:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Webhook not found"
-        )
+    webhook = await get_entity_or_404(db, Webhook, webhook_id, "Webhook")
 
     # Prepare test payload
     test_payload = test_request.test_data if test_request else {
