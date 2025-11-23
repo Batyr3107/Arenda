@@ -8,6 +8,8 @@ from app.models.user import User, UserRole
 from app.schemas.user import UserCreate, UserUpdate, UserResponse
 from app.api.deps import get_super_admin, get_admin_or_higher
 from app.core.security import get_password_hash
+from app.utils.repository import get_entity_or_404, check_unique_field
+from app.utils.models import update_model_fields
 
 router = APIRouter()
 
@@ -32,14 +34,10 @@ async def create_user(
 ):
     """Create new user (Admin or higher)"""
     # Check if user with this email already exists
-    result = await db.execute(
-        select(User).where(User.email == user_data.email)
+    await check_unique_field(
+        db, User, User.email, user_data.email,
+        error_message="User with this email already exists"
     )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User with this email already exists"
-        )
 
     # Only super admins can create super admins
     if user_data.role == UserRole.SUPER_ADMIN and current_user.role != UserRole.SUPER_ADMIN:
@@ -48,11 +46,8 @@ async def create_user(
             detail="Only super admins can create super admin users"
         )
 
-    # Hash password
-    from app.core.security import get_password_hash
+    # Hash password and create user
     hashed_password = get_password_hash(user_data.password)
-
-    # Create user
     user_dict = user_data.model_dump()
     user_dict.pop('password')
     user = User(**user_dict, hashed_password=hashed_password)
@@ -112,16 +107,7 @@ async def get_user(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Get user by ID (Admin or higher)"""
-    result = await db.execute(
-        select(User).where(User.id == user_id)
-    )
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+    user = await get_entity_or_404(db, User, user_id, "User")
 
     # Property admins can only view users from their company
     if current_user.role == UserRole.PROPERTY_ADMIN and user.company_id != current_user.company_id:
@@ -141,16 +127,7 @@ async def update_user(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Update user (Admin or higher)"""
-    result = await db.execute(
-        select(User).where(User.id == user_id)
-    )
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+    user = await get_entity_or_404(db, User, user_id, "User")
 
     # Property admins can only update users from their company
     if current_user.role == UserRole.PROPERTY_ADMIN and user.company_id != current_user.company_id:
@@ -161,14 +138,11 @@ async def update_user(
 
     # Check if email is being changed and if it's already taken
     if user_data.email and user_data.email != user.email:
-        email_check = await db.execute(
-            select(User).where(User.email == user_data.email)
+        await check_unique_field(
+            db, User, User.email, user_data.email,
+            exclude_id=user_id,
+            error_message="User with this email already exists"
         )
-        if email_check.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="User with this email already exists"
-            )
 
     # Update fields
     for field, value in user_data.model_dump(exclude_unset=True).items():
@@ -187,16 +161,7 @@ async def change_user_role(
     current_user: User = Depends(get_super_admin)
 ):
     """Change user role (Super Admin only)"""
-    result = await db.execute(
-        select(User).where(User.id == user_id)
-    )
-    user = result.scalar_one_or_none()
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+    user = await get_entity_or_404(db, User, user_id, "User")
 
     user.role = role_data.role
     await db.commit()
