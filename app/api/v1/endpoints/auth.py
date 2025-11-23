@@ -8,6 +8,7 @@ from app.core.security import verify_password, get_password_hash, create_access_
 from app.models.user import User
 from app.schemas.user import UserCreate, UserResponse, Token, UserLogin
 from app.api.deps import get_current_active_user
+from app.utils.repository import check_unique_field
 
 router = APIRouter()
 
@@ -19,14 +20,10 @@ async def register(
 ):
     """Register a new user"""
     # Check if user already exists
-    result = await db.execute(select(User).where(User.email == user_data.email))
-    existing_user = result.scalar_one_or_none()
-
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
+    await check_unique_field(
+        db, User, User.email, user_data.email,
+        error_message="Email already registered"
+    )
 
     # Create new user
     hashed_password = get_password_hash(user_data.password)

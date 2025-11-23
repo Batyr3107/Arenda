@@ -7,6 +7,8 @@ from app.models.company import Company
 from app.models.user import User
 from app.schemas.company import CompanyCreate, CompanyUpdate, CompanyResponse
 from app.api.deps import get_super_admin
+from app.utils.repository import get_entity_or_404, check_unique_field
+from app.utils.models import update_model_fields
 
 router = APIRouter()
 
@@ -19,14 +21,10 @@ async def create_company(
 ):
     """Create new company (Super Admin only)"""
     # Check if company with this BIN/IIN already exists
-    result = await db.execute(
-        select(Company).where(Company.bin_iin == company_data.bin_iin)
+    await check_unique_field(
+        db, Company, Company.bin_iin, company_data.bin_iin,
+        error_message="Company with this BIN/IIN already exists"
     )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Company with this BIN/IIN already exists"
-        )
 
     company = Company(**company_data.model_dump())
     db.add(company)
@@ -69,17 +67,7 @@ async def get_company(
     current_user: User = Depends(get_super_admin)
 ):
     """Get company by ID (Super Admin only)"""
-    result = await db.execute(
-        select(Company).where(Company.id == company_id)
-    )
-    company = result.scalar_one_or_none()
-
-    if not company:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Company not found"
-        )
-
+    company = await get_entity_or_404(db, Company, company_id, "Company")
     return company
 
 
@@ -91,34 +79,17 @@ async def update_company(
     current_user: User = Depends(get_super_admin)
 ):
     """Update company (Super Admin only)"""
-    result = await db.execute(
-        select(Company).where(Company.id == company_id)
-    )
-    company = result.scalar_one_or_none()
-
-    if not company:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Company not found"
-        )
+    company = await get_entity_or_404(db, Company, company_id, "Company")
 
     # Check if BIN/IIN is being changed and if it's already taken
     if company_data.bin_iin and company_data.bin_iin != company.bin_iin:
-        bin_check = await db.execute(
-            select(Company).where(Company.bin_iin == company_data.bin_iin)
+        await check_unique_field(
+            db, Company, Company.bin_iin, company_data.bin_iin,
+            exclude_id=company_id,
+            error_message="Company with this BIN/IIN already exists"
         )
-        if bin_check.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Company with this BIN/IIN already exists"
-            )
 
-    # Update fields
-    for field, value in company_data.model_dump(exclude_unset=True).items():
-        setattr(company, field, value)
-
-    await db.commit()
-    await db.refresh(company)
+    company = await update_model_fields(db, company, company_data)
     return company
 
 
@@ -129,17 +100,6 @@ async def delete_company(
     current_user: User = Depends(get_super_admin)
 ):
     """Delete company (Super Admin only)"""
-    result = await db.execute(
-        select(Company).where(Company.id == company_id)
-    )
-    company = result.scalar_one_or_none()
-
-    if not company:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Company not found"
-        )
-
+    company = await get_entity_or_404(db, Company, company_id, "Company")
     await db.delete(company)
     await db.commit()
-    return None

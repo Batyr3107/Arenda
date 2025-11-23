@@ -11,6 +11,7 @@ from app.schemas.lead import (
     LeadCommunicationCreate, LeadCommunicationResponse
 )
 from app.api.deps import get_moderator_or_higher
+from app.utils.repository import get_entity_or_404
 
 router = APIRouter()
 
@@ -63,15 +64,7 @@ async def get_lead(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Get lead by ID"""
-    result = await db.execute(select(Lead).where(Lead.id == lead_id))
-    lead = result.scalar_one_or_none()
-
-    if not lead:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Lead not found"
-        )
-
+    lead = await get_entity_or_404(db, Lead, lead_id, "Lead")
     return lead
 
 
@@ -83,14 +76,7 @@ async def update_lead(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Update lead status and details"""
-    result = await db.execute(select(Lead).where(Lead.id == lead_id))
-    lead = result.scalar_one_or_none()
-
-    if not lead:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Lead not found"
-        )
+    lead = await get_entity_or_404(db, Lead, lead_id, "Lead")
 
     # Update fields
     for field, value in lead_data.model_dump(exclude_unset=True).items():
@@ -114,12 +100,7 @@ async def add_communication(
 ):
     """Add communication record to lead"""
     # Verify lead exists
-    result = await db.execute(select(Lead).where(Lead.id == lead_id))
-    if not result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Lead not found"
-        )
+    await get_entity_or_404(db, Lead, lead_id, "Lead")
 
     communication = LeadCommunication(
         lead_id=lead_id,
