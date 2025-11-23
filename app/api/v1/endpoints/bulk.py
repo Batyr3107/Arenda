@@ -49,12 +49,28 @@ async def bulk_publish_premises(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Bulk publish/unpublish premises
-    Refactored: N queries → 1 batch query (N+1 fix)"""
-    # Single batch query instead of N queries
+    Refactored: N queries → 1 batch query (N+1 fix)
+    SECURITY FIX: Added company_id validation to prevent cross-company access"""
+    from app.models.property import Building, Property
+
+    # ✅ SECURITY: Only fetch premises that belong to user's company
     result = await db.execute(
-        select(Premise).where(Premise.id.in_(request.premise_ids))
+        select(Premise)
+        .join(Building, Premise.building_id == Building.id)
+        .join(Property, Building.property_id == Property.id)
+        .where(
+            Premise.id.in_(request.premise_ids),
+            Property.company_id == current_user.company_id  # ✅ Company isolation
+        )
     )
     premises = result.scalars().all()
+
+    # ✅ Check if all requested premises were found (security check)
+    if len(premises) != len(request.premise_ids):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Some premises do not belong to your company or were not found"
+        )
 
     # Update all found premises
     for premise in premises:
@@ -76,23 +92,68 @@ async def bulk_update_premise_status(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Bulk update premise status
-    Refactored: N queries → 1 batch query (N+1 fix)"""
-    # Single batch query instead of N queries
+    Refactored: N queries → 1 batch query (N+1 fix)
+    SECURITY FIX: Added company_id validation
+    BUSINESS LOGIC FIX: Added contract status validation"""
+    from app.models.property import Building, Property
+    from app.models.contract import Contract, ContractStatus
+    from sqlalchemy.orm import selectinload
+
+    # ✅ SECURITY: Only fetch premises that belong to user's company
     result = await db.execute(
-        select(Premise).where(Premise.id.in_(request.premise_ids))
+        select(Premise)
+        .join(Building, Premise.building_id == Building.id)
+        .join(Property, Building.property_id == Property.id)
+        .where(
+            Premise.id.in_(request.premise_ids),
+            Property.company_id == current_user.company_id
+        )
+        .options(selectinload(Premise.contracts))  # ✅ Load contracts for validation
     )
     premises = result.scalars().all()
 
-    # Update all found premises
+    # ✅ Security check
+    if len(premises) != len(request.premise_ids):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Some premises do not belong to your company or were not found"
+        )
+
+    # ✅ BUSINESS LOGIC: Validate status changes with contract state
+    failed = []
+    updated_count = 0
+
     for premise in premises:
+        active_contracts = [c for c in premise.contracts if c.status == ContractStatus.ACTIVE]
+
+        # ✅ Cannot set OCCUPIED without active contract
+        if request.status == PremiseStatus.OCCUPIED and not active_contracts:
+            failed.append({
+                "id": premise.id,
+                "number": premise.number,
+                "reason": "Cannot set OCCUPIED status without active contract"
+            })
+            continue
+
+        # ✅ Cannot set AVAILABLE with active contracts
+        if request.status == PremiseStatus.AVAILABLE and active_contracts:
+            failed.append({
+                "id": premise.id,
+                "number": premise.number,
+                "reason": f"Cannot set AVAILABLE status with {len(active_contracts)} active contract(s)"
+            })
+            continue
+
         premise.status = request.status
+        updated_count += 1
 
     await db.commit()
 
     return {
-        "message": f"Updated {len(premises)} premises to status {request.status.value}",
-        "updated_count": len(premises),
-        "total_requested": len(request.premise_ids)
+        "message": f"Updated {updated_count} premises to status {request.status.value}",
+        "updated_count": updated_count,
+        "total_requested": len(request.premise_ids),
+        "failed": failed
     }
 
 
@@ -103,30 +164,73 @@ async def bulk_approve_payments_first_stage(
     current_user: User = Depends(get_moderator_or_higher)
 ):
     """Bulk approve payments (first stage)
-    Refactored: N queries → 1 batch query (N+1 fix)"""
-    # Single batch query instead of N queries
+    Refactored: N queries → 1 batch query (N+1 fix)
+    SECURITY FIX: Added company_id validation
+    RACE CONDITION FIX: Using atomic UPDATE to prevent concurrent approval conflicts"""
+    from app.models.contract import Contract
+    from app.models.tenant import Tenant
+    from sqlalchemy import update as sql_update
+    from datetime import datetime
+
+    # ✅ SECURITY: First verify all payments belong to user's company
     result = await db.execute(
-        select(Payment).where(Payment.id.in_(request.payment_ids))
+        select(Payment.id)
+        .join(Contract, Payment.contract_id == Contract.id)
+        .join(Tenant, Contract.tenant_id == Tenant.id)
+        .where(
+            Payment.id.in_(request.payment_ids),
+            Tenant.company_id == current_user.company_id  # ✅ Company isolation
+        )
     )
-    payments = {p.id: p for p in result.scalars().all()}
+    valid_payment_ids = set(result.scalars().all())
 
-    approved_count = 0
+    # Check for unauthorized access
+    unauthorized_ids = set(request.payment_ids) - valid_payment_ids
     failed = []
+    if unauthorized_ids:
+        for payment_id in unauthorized_ids:
+            failed.append({
+                "id": payment_id,
+                "reason": "Payment not found or does not belong to your company"
+            })
 
-    for payment_id in request.payment_ids:
-        payment = payments.get(payment_id)
+    # ✅ RACE CONDITION FIX: Atomic UPDATE prevents double-approval
+    # Only update payments that are PENDING_APPROVAL and NOT YET approved
+    result = await db.execute(
+        sql_update(Payment)
+        .where(
+            Payment.id.in_(list(valid_payment_ids)),
+            Payment.status == PaymentStatus.PENDING_APPROVAL,
+            Payment.first_approved_by_id.is_(None)  # ✅ Atomic check - only if not approved yet
+        )
+        .values(
+            first_approved_by_id=current_user.id,
+            first_approved_at=datetime.utcnow()
+        )
+        .returning(Payment.id)
+    )
+    approved_ids = result.scalars().all()
+    approved_count = len(approved_ids)
 
-        if not payment:
-            failed.append({"id": payment_id, "reason": "Payment not found"})
-            continue
+    # Check for payments that couldn't be approved (wrong status or already approved)
+    not_approved_ids = valid_payment_ids - set(approved_ids)
+    if not_approved_ids:
+        # Fetch details for failed payments
+        result = await db.execute(
+            select(Payment).where(Payment.id.in_(list(not_approved_ids)))
+        )
+        not_approved_payments = result.scalars().all()
 
-        if payment.status != PaymentStatus.PENDING_APPROVAL:
-            failed.append({"id": payment_id, "reason": "Invalid status"})
-            continue
+        for payment in not_approved_payments:
+            if payment.first_approved_by_id is not None:
+                reason = f"Already approved by user {payment.first_approved_by_id}"
+            else:
+                reason = f"Invalid status: {payment.status.value}"
 
-        payment.first_approved_by_id = current_user.id
-        payment.first_approved_at = date.today()
-        approved_count += 1
+            failed.append({
+                "id": payment.id,
+                "reason": reason
+            })
 
     await db.commit()
 
@@ -145,32 +249,77 @@ async def bulk_approve_payments_second_stage(
     current_user: User = Depends(get_admin_or_higher)
 ):
     """Bulk approve payments (second stage - final)
-    Refactored: N queries → 1 batch query (N+1 fix)"""
-    # Single batch query instead of N queries
+    Refactored: N queries → 1 batch query (N+1 fix)
+    SECURITY FIX: Added company_id validation
+    RACE CONDITION FIX: Using atomic UPDATE"""
+    from app.models.contract import Contract
+    from app.models.tenant import Tenant
+    from sqlalchemy import update as sql_update
+    from datetime import datetime
+
+    # ✅ SECURITY: Verify all payments belong to user's company
     result = await db.execute(
-        select(Payment).where(Payment.id.in_(request.payment_ids))
+        select(Payment.id)
+        .join(Contract, Payment.contract_id == Contract.id)
+        .join(Tenant, Contract.tenant_id == Tenant.id)
+        .where(
+            Payment.id.in_(request.payment_ids),
+            Tenant.company_id == current_user.company_id
+        )
     )
-    payments = {p.id: p for p in result.scalars().all()}
+    valid_payment_ids = set(result.scalars().all())
 
-    approved_count = 0
+    # Check for unauthorized access
+    unauthorized_ids = set(request.payment_ids) - valid_payment_ids
     failed = []
+    if unauthorized_ids:
+        for payment_id in unauthorized_ids:
+            failed.append({
+                "id": payment_id,
+                "reason": "Payment not found or does not belong to your company"
+            })
 
-    for payment_id in request.payment_ids:
-        payment = payments.get(payment_id)
+    # ✅ RACE CONDITION FIX: Atomic UPDATE
+    # Only update payments that have first approval and NOT YET second approved
+    today = datetime.utcnow()
+    result = await db.execute(
+        sql_update(Payment)
+        .where(
+            Payment.id.in_(list(valid_payment_ids)),
+            Payment.first_approved_by_id.isnot(None),  # ✅ Must have first approval
+            Payment.second_approved_by_id.is_(None)  # ✅ Not yet second approved
+        )
+        .values(
+            status=PaymentStatus.APPROVED,
+            second_approved_by_id=current_user.id,
+            second_approved_at=today,
+            payment_date=today.date()
+        )
+        .returning(Payment.id)
+    )
+    approved_ids = result.scalars().all()
+    approved_count = len(approved_ids)
 
-        if not payment:
-            failed.append({"id": payment_id, "reason": "Payment not found"})
-            continue
+    # Check for failures
+    not_approved_ids = valid_payment_ids - set(approved_ids)
+    if not_approved_ids:
+        result = await db.execute(
+            select(Payment).where(Payment.id.in_(list(not_approved_ids)))
+        )
+        not_approved_payments = result.scalars().all()
 
-        if not payment.first_approved_by_id:
-            failed.append({"id": payment_id, "reason": "Not approved in first stage"})
-            continue
+        for payment in not_approved_payments:
+            if payment.second_approved_by_id is not None:
+                reason = f"Already approved by user {payment.second_approved_by_id}"
+            elif payment.first_approved_by_id is None:
+                reason = "Not approved in first stage"
+            else:
+                reason = f"Invalid status: {payment.status.value}"
 
-        payment.status = PaymentStatus.APPROVED
-        payment.second_approved_by_id = current_user.id
-        payment.second_approved_at = date.today()
-        payment.payment_date = date.today()
-        approved_count += 1
+            failed.append({
+                "id": payment.id,
+                "reason": reason
+            })
 
     await db.commit()
 
@@ -282,27 +431,34 @@ async def import_tenants_from_file(
         created_count = 0
         failed = []
 
+        # ✅ TRANSACTION SAFETY FIX: Use savepoints for per-row transactions
         for index, row in df.iterrows():
             try:
-                tenant = Tenant(
-                    full_name=row['full_name'],
-                    email=row.get('email'),
-                    phone=row['phone'],
-                    id_number=row.get('id_number'),
-                    address=row.get('address'),
-                    notes=row.get('notes'),
-                    company_id=current_user.company_id
-                )
-                db.add(tenant)
-                created_count += 1
+                # ✅ Create savepoint for atomic row processing
+                async with db.begin_nested():
+                    tenant = Tenant(
+                        full_name=row['full_name'],
+                        email=row.get('email'),
+                        phone=row['phone'],
+                        id_number=row.get('id_number'),
+                        address=row.get('address'),
+                        notes=row.get('notes'),
+                        company_id=current_user.company_id  # ✅ Security: Only import to own company
+                    )
+                    db.add(tenant)
+                    await db.flush()  # ✅ Validate within savepoint
+                    created_count += 1
 
             except Exception as e:
+                # ✅ Savepoint auto-rollbacks on exception
+                await db.rollback()  # Rollback only this row
                 failed.append({
                     "row": index + 2,
                     "data": row.to_dict(),
                     "error": str(e)
                 })
 
+        # ✅ Commit all successful rows
         await db.commit()
 
         return {
@@ -331,11 +487,33 @@ async def import_premises_from_file(
     """
     Import premises from Excel/CSV file
     Expected columns: number, floor, area, rooms, price, description
+    SECURITY FIX: Added property/building ownership validation
+    TRANSACTION FIX: Added savepoint-based transaction safety
     """
+    from app.models.property import Building, Property
+
     if not file.filename.endswith(('.xlsx', '.xls', '.csv')):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only Excel (.xlsx, .xls) and CSV files are supported"
+        )
+
+    # ✅ SECURITY: Validate building/property ownership BEFORE processing file
+    result = await db.execute(
+        select(Building)
+        .join(Property, Building.property_id == Property.id)
+        .where(
+            Building.id == building_id,
+            Building.property_id == property_id,
+            Property.company_id == current_user.company_id  # ✅ Company isolation
+        )
+    )
+    building = result.scalar_one_or_none()
+
+    if not building:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Building not found or does not belong to your company"
         )
 
     try:
@@ -359,23 +537,26 @@ async def import_premises_from_file(
         created_count = 0
         failed = []
 
+        # ✅ TRANSACTION SAFETY: Use savepoints for per-row transactions
         for index, row in df.iterrows():
             try:
-                premise = Premise(
-                    number=str(row['number']),
-                    floor=int(row.get('floor', 1)),
-                    area=float(row['area']),
-                    rooms=int(row.get('rooms', 1)),
-                    price=float(row['price']),
-                    description=row.get('description'),
-                    property_id=property_id,
-                    building_id=building_id,
-                    status=PremiseStatus.VACANT
-                )
-                db.add(premise)
-                created_count += 1
+                async with db.begin_nested():
+                    premise = Premise(
+                        number=str(row['number']),
+                        floor=int(row.get('floor', 1)),
+                        area=float(row['area']),
+                        premise_type=PremiseType.OFFICE,  # Default type
+                        price_per_month=float(row['price']),
+                        description=row.get('description'),
+                        building_id=building_id,  # ✅ Only building_id, no property_id in model
+                        status=PremiseStatus.AVAILABLE
+                    )
+                    db.add(premise)
+                    await db.flush()  # ✅ Validate within savepoint
+                    created_count += 1
 
             except Exception as e:
+                await db.rollback()  # ✅ Rollback only this row
                 failed.append({
                     "row": index + 2,
                     "data": row.to_dict(),

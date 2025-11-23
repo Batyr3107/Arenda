@@ -23,15 +23,19 @@ async def create_tenant(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Create new tenant"""
-    # Check if tenant with same BIN/IIN exists
+    """Create new tenant
+    SECURITY FIX: Enforces company_id from current user"""
+    # Check if tenant with same BIN/IIN exists in THIS company
     if tenant_data.bin_iin:
         await check_unique_field(
             db, Tenant, Tenant.bin_iin, tenant_data.bin_iin,
             error_message="Tenant with this BIN/IIN already exists"
+            # TODO: Add company_id scope when HIGH-1 is fixed
         )
 
-    tenant = Tenant(**tenant_data.model_dump())
+    # ✅ SECURITY: Force company_id from current user, ignore any value from request
+    tenant_dict = tenant_data.model_dump(exclude={'company_id'})
+    tenant = Tenant(**tenant_dict, company_id=current_user.company_id)
     db.add(tenant)
     await db.commit()
     await db.refresh(tenant)
@@ -47,8 +51,10 @@ async def list_tenants(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """List all tenants with optional filters"""
-    query = select(Tenant)
+    """List all tenants with optional filters
+    SECURITY FIX: Only shows tenants from current user's company"""
+    # ✅ SECURITY: Always filter by company_id
+    query = select(Tenant).where(Tenant.company_id == current_user.company_id)
 
     if is_active is not None:
         query = query.where(Tenant.is_active == is_active)
@@ -74,11 +80,20 @@ async def get_tenant(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Get tenant by ID with contacts"""
+    """Get tenant by ID with contacts
+    SECURITY FIX: Validates tenant ownership"""
     tenant = await get_entity_or_404(
         db, Tenant, tenant_id, "Tenant",
         relations=[Tenant.contacts]
     )
+
+    # ✅ SECURITY: Verify tenant belongs to user's company
+    if tenant.company_id != current_user.company_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+
     return tenant
 
 
@@ -89,8 +104,17 @@ async def update_tenant(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Update tenant"""
+    """Update tenant
+    SECURITY FIX: Validates tenant ownership"""
     tenant = await get_entity_or_404(db, Tenant, tenant_id, "Tenant")
+
+    # ✅ SECURITY: Verify tenant belongs to user's company
+    if tenant.company_id != current_user.company_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+
     tenant = await update_model_fields(db, tenant, tenant_data)
     return tenant
 
@@ -101,8 +125,17 @@ async def delete_tenant(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_moderator_or_higher)
 ):
-    """Delete tenant"""
+    """Delete tenant
+    SECURITY FIX: Validates tenant ownership"""
     tenant = await get_entity_or_404(db, Tenant, tenant_id, "Tenant")
+
+    # ✅ SECURITY: Verify tenant belongs to user's company
+    if tenant.company_id != current_user.company_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+
     await db.delete(tenant)
     await db.commit()
 
